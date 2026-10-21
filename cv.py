@@ -26,7 +26,9 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+EDGE_PATHS = [os.path.join(os.environ.get(v, ""), r"Microsoft\Edge\Application\msedge.exe")
+              for v in ("ProgramFiles(x86)", "ProgramFiles", "LocalAppData")]
+EDGE = next((p for p in EDGE_PATHS if os.path.exists(p)), None)
 
 CSS = """
 @page { size: A4; margin: 14mm 15mm; }
@@ -106,6 +108,8 @@ def build_letter(profile, letter):
 def main():
     is_letter = sys.argv[1] == "--letter"
     data_path, out_pdf = sys.argv[1 + is_letter], os.path.abspath(sys.argv[2 + is_letter])
+    if not EDGE:
+        sys.exit("Microsoft Edge not found (needed to make the PDF). Install it from https://www.microsoft.com/edge")
     with open(os.path.join(HERE, "profile.json"), encoding="utf-8") as f:
         profile = json.load(f)
     with open(data_path, encoding="utf-8-sig") as f:

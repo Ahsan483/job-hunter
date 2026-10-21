@@ -22,3 +22,14 @@ gemini_state.json.tmp
 profile.json
 # Old Claude-in-Chrome instructions with personal details
 INSTRUCTIONS.md
+remotive_cache.json
+remotive_cache.json.tmp
+
+# Just in case: environments, credentials, logs
+.env
+.venv/
+venv/
+credentials*.json
+token*.json
+client_secret*.json
+*.log

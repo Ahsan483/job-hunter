@@ -1,89 +1,95 @@
-# Remote Job Hunter
+# Job Hunter
 
-A small Windows bot that finds remote jobs, writes a tailored CV and email for each match with Google Gemini (free tier), and saves them as **Gmail drafts**. It never sends anything: you read each draft and press Send yourself.
+**Find remote jobs, get a tailored ATS-friendly CV + cover letter for each one, and have the application email waiting in your Gmail drafts.** Free Gemini AI, a simple Windows window, and nothing to `pip install`.
 
-It searches Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the latest Hacker News "Who is hiring?" thread. It keeps jobs that match your keywords, are recent, and are remote. It then looks for an application email in the post or on the company's own careers page.
+The bot never sends anything. You read each draft and press Send yourself.
 
-## What you need
+> 🎥 Made by **Ahsan Mehmood**. Follow on TikTok: [@YOUR-TIKTOK](https://www.tiktok.com/@YOUR-TIKTOK) · GitHub: [Ahsan483](https://github.com/Ahsan483)
 
-- Windows 10 or 11 with **Microsoft Edge** (used to turn the CV into a PDF)
-- **Python 3.10+** (no extra packages needed)
-- A **Gmail** account with an app password (the drafts are saved here)
-- A free **Gemini API key**
+## Demo
 
-## Setup
+<!-- Replace with a GIF or screenshot of the window: docs/demo.gif -->
+![Job Hunter window](docs/demo.gif)
 
-### 1. Get the code
+## Features
+
+- **Searches 8 job sources at once:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the Hacker News "Who is hiring?" thread.
+- **Smart filter:** your keywords, max post age, max years of experience, and "only open worldwide / to my region".
+- **Finds the application email** in the post, or on the company's own careers page.
+- **Tailored CV + cover letter (PDF)** for each job, built only from facts in your profile. The bot drops any line that adds a skill or number you don't have.
+- **Gmail drafts** with the CV attached, ready for you to review and send.
+- **Paste any job post** (LinkedIn, a company site) and get a tailored CV + cover letter for it.
+- **Upload your CV** once and Gemini turns it into your profile.
+- **Auto-run every 30 minutes** with Windows Task Scheduler.
+- **Uses only free Gemini models** and switches to another model when one runs out of free quota.
+
+## Requirements
+
+- Windows 10 or 11
+- [Python 3.10+](https://www.python.org/downloads/). Tick **"Add python.exe to PATH"** when installing.
+- Microsoft Edge (built into Windows; used to make the PDFs)
+- A free Gemini API key
+- A Gmail account, only if you want automatic drafts
+
+Nothing to `pip install`: the app uses only Python's standard library.
+
+## Install
+
+### 1. Download
 ```
 git clone https://github.com/Ahsan483/job-hunter.git
 cd job-hunter
 ```
+Or click **Code → Download ZIP** on GitHub and unzip it.
 
-### 2. Add your secrets: `config.json`
+### 2. Get a free Gemini API key
+1. Go to https://aistudio.google.com/app/apikey and sign in with a Google account.
+2. Click **Create API key** and copy it.
+
+### 3. Set up Gmail drafts (optional)
+Skip this if you only want CVs and cover letters.
+1. Turn on 2-Step Verification: https://myaccount.google.com/security
+2. Create an app password at https://myaccount.google.com/apppasswords (name it "Job Hunter") and copy the 16 letters.
+3. Check that IMAP is on: Gmail → Settings → See all settings → Forwarding and POP/IMAP. It is on by default for most accounts.
+
+### 4. Create `config.json`
 Copy `config.example.json` to `config.json` and fill in:
 
 | Key | What to put |
 |---|---|
+| `gemini_api_key` | Your Gemini key from step 2 |
 | `gmail_address` | The Gmail address that should hold the drafts |
-| `gmail_app_password` | A 16-letter app password: turn on 2-Step Verification at https://myaccount.google.com/security, then create one at https://myaccount.google.com/apppasswords |
-| `gemini_api_key` | A free key from https://aistudio.google.com/app/apikey |
+| `gmail_app_password` | The 16-letter app password from step 3 |
 
-Gmail must allow IMAP (Gmail → Settings → See all settings → Forwarding and POP/IMAP). It is on by default for most accounts.
+`config.json` holds your passwords. It is in `.gitignore`, so it's never uploaded. Don't share it.
 
-### 3. Add your CV data: `profile.json`
-Every CV, cover letter and email is built **only** from facts in `profile.json`. Pick one way to create it:
+### 5. Create `profile.json` (your CV data)
+Every CV, cover letter and email is built **only** from facts in `profile.json`. Pick one way to make it:
 
-- **Easiest:** open the window (step 4) and press **Upload my CV**. Gemini reads your CV (.pdf, .docx or .txt) and writes `profile.json` for you. Check the result afterwards.
-- **By hand:** copy `profile.example.json` to `profile.json` and replace the sample person (Jane Doe) with your own details. Keep the same keys: `name`, `default_title`, `contact`, `location`, `years`, `default_summary`, `experience` (each with a unique `id` and a list of `bullets`), `projects`, `skills`, `education`.
-- **From the command line:** `python -I bot.py --import-cv my-cv.pdf`
+- **Easiest:** open the window (next step) and press **Upload my CV**. Gemini reads your CV (.pdf, .docx, .txt or .md) and writes `profile.json`. Then press **My profile** and check it.
+- **By hand:** copy `profile.example.json` to `profile.json` and replace the sample person (Jane Doe) with your details. Keep the same keys: `name`, `default_title`, `contact`, `location`, `years`, `default_summary`, `experience` (each with a unique `id` and a list of `bullets`), `projects`, `skills`, `education`.
+- **Command line:** `python -I bot.py --import-cv my-cv.pdf`
 
-### 4. Set your job filter
-In `config.json`, or in the window's **Job filter** bar:
-
-| Key | Meaning | Example |
-|---|---|---|
-| `keywords` | A job is kept if **any** of these appears in it | `["React", "Node.js", "TypeScript"]` |
-| `exclude_keywords` | Skip jobs with these words in the title | `["Intern", "PHP"]` |
-| `max_job_age_days` | Ignore older posts | `14` |
-| `max_years_required` | Skip jobs asking for this many years or more (`0` = off) | `8` |
-| `worldwide_only` | `true`: only jobs open worldwide or to your region. `false`: any remote job | `true` |
-| `my_region_words` | Your country/region; posts naming these count as open to you | `["Pakistan", "South Asia"]` |
-| `min_fit_score` | Gemini's 0-100 fit score a job needs before a draft is made | `60` |
-| `max_drafts_per_run` / `max_drafts_per_day` | Draft limits | `3` / `20` |
-| `max_gemini_calls_per_run` | Keeps you inside Gemini's free limits | `8` |
-
-The defaults look for .NET / C# jobs. Change `keywords` for your own stack.
-
-### 5. Test it
-```
-python -I bot.py --dry-run
-```
-This uses no Gemini and no Gmail. It shows how many jobs each site returned and which passed the filter. Then do a real run:
-```
-python -I bot.py
-```
-This takes 1-3 minutes and ends with a line like `... | drafts 1`. Check Gmail → Drafts.
-
-## The window (GUI)
-
-Start it by double-clicking **Job Hunter.bat**, or run:
+### 6. Start it
+Double-click **Job Hunter.bat**, or run:
 ```
 python -I gui.py
 ```
+Press **Find jobs** for a first test. It takes 1-3 minutes and uses no Gemini and no Gmail.
+
+## Using the window
 
 **Top bar**
-- **Find jobs**: searches every job site (1-3 min) and lists the matches. Uses no Gemini and no Gmail.
-- **Auto-draft best matches**: the same as a scheduled run. Gemini checks the fit, writes a tailored CV and email, and saves Gmail drafts.
-- **Gmail drafts**, **CVs folder**, **Tracker**, **Run log**: open your drafts, the generated PDFs, `tracker.csv` and `runs.log`.
+- **Find jobs**: searches every job site and lists the matches.
+- **Auto-draft best matches**: Gemini checks the fit of the top matches, writes a tailored CV and email for each, and saves Gmail drafts.
+- **Gmail drafts**, **CVs folder**, **Tracker**, **Run log**: open your drafts, the PDFs, `tracker.csv` and `runs.log`.
 - **Settings**: fit score, draft limits, Gemini call limit and preferred model. **Edit Gmail / Gemini keys…** opens `config.json`.
-- **Auto-run**: turns the 30-minute scheduled task on or off (see below).
+- **Auto-run**: turns the 30-minute schedule on or off (see below).
 
 **Your CV**
-- **Upload my CV**: Gemini reads your CV (.pdf, .docx, .txt or .md) and rebuilds `profile.json`. The old one is kept as `profile.backup-*.json`.
-- **My profile**: opens `profile.json` in Notepad so you can fix anything.
-- **Tailor CV to a job description…**: paste any job post (from LinkedIn, a company site, etc.) to get a tailored CV + cover letter for it.
-
-**Job filter bar**: keywords, words to exclude, max age, and "Only open worldwide / to my region". **Save & search** saves them to `config.json` (the scheduled run uses them too) and searches again.
+- **Upload my CV**: rebuilds `profile.json` from your CV. The old one is kept as `profile.backup-*.json`.
+- **My profile**: opens `profile.json` in Notepad.
+- **Tailor CV to a job description…**: paste any job post to get a tailored CV + cover letter.
 
 **Job list**
 - **Show** picks the list: ready to draft (has an email), apply on company site, all matches, done / skipped, or everything (rejected jobs show why).
@@ -93,30 +99,87 @@ python -I gui.py
   - **Make CV + cover letter**: for jobs you apply to on the company site. The files go to `cvs/`.
   - **Open job page**, **Copy email**, **Skip job** (the bot won't draft it again).
 
-## Run it every 30 minutes (optional)
+## Filters
 
-Create the scheduled task once (change the path to your folder):
+Set these in the **Job filter** bar (then press **Save & search**) or in `config.json`:
+
+| Setting | Meaning | Example |
+|---|---|---|
+| Keywords (`keywords`) | A job is kept if **any** of these appears in it | `React, Node.js, TypeScript` |
+| Exclude in title (`exclude_keywords`) | Skip jobs with these words in the title | `Intern, PHP` |
+| Max age (`max_job_age_days`) | Ignore older posts | `14` |
+| Only open worldwide / to my region (`worldwide_only`) | On: only jobs that hire worldwide or in your region. Off: any remote job | on |
+| `my_region_words` (config.json) | Your country/region. Posts naming these count as open to you | `["Pakistan", "South Asia"]` |
+| `max_years_required` (config.json) | Skip jobs asking for this many years or more (`0` = off) | `8` |
+
+The defaults look for .NET / C# jobs. Change the keywords to your own stack.
+
+**Settings** also has: `min_fit_score` (0-100 score Gemini gives a job before a draft is made, default 60), `max_drafts_per_run` (3), `max_drafts_per_day` (20) and `max_gemini_calls_per_run` (8, keeps you inside the free limits).
+
+## Auto-run every 30 minutes
+
+Create the scheduled task once in PowerShell (change the path to your folder):
 ```
 schtasks /Create /TN "Remote Job Hunter" /SC MINUTE /MO 30 /TR "pythonw -I \"C:\path\to\job-hunter\bot.py\""
 ```
-After that, the **Auto-run** button in the window turns it on and off.
+After that, the **Auto-run** button in the window turns it on and off. Each run searches, tailors up to `max_drafts_per_run` CVs, and saves the drafts. Nothing is ever sent.
+
+## Command line
+
+```
+python -I bot.py --dry-run          # search and filter only (no Gemini, no Gmail)
+python -I bot.py                    # one full run, the same as Auto-run
+python -I bot.py --import-cv cv.pdf # rebuild profile.json from your CV
+```
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Double-clicking `Job Hunter.bat` does nothing / "Python was not found" | Install Python 3.10+ from python.org and tick "Add python.exe to PATH". |
+| "config.json is missing gmail_address, gmail_app_password or gemini_api_key" | Fill in `config.json` (install step 4). |
+| "profile.json not found" | Press **Upload my CV**, or copy `profile.example.json` to `profile.json`. |
+| "Another run is in progress" | A run was killed halfway. Wait 25 minutes or delete `bot.lock`. |
+| "Microsoft Edge not found" | Install Edge from https://www.microsoft.com/edge. |
+| Gmail login fails | Use the 16-letter **app password**, not your normal password, and check that IMAP is on. |
+| "every free model is out of quota" | Gemini's free limit is used up. The log says when it's back, usually within a day. |
+| "model was not found" in `runs.log` | Set `gemini_model` to a current name from https://ai.google.dev/gemini-api/docs/models. |
+| No jobs found | Add more keywords, raise the max age, or turn off "Only open worldwide / to my region". |
 
 ## Files
 
-| File | Purpose | In git? |
+| File | Purpose | Uploaded to GitHub? |
 |---|---|---|
 | `bot.py` | Job search, Gemini tailoring, Gmail drafts | yes |
 | `gui.py` | The window | yes |
-| `cv.py` | Builds the CV / cover letter PDF from `profile.json` | yes |
+| `cv.py` | Builds the CV / cover letter PDF | yes |
 | `config.example.json`, `profile.example.json` | Templates to copy | yes |
-| `config.json` | Your passwords and settings | **no** (ignored) |
-| `profile.json` | Your CV data | **no** (ignored) |
-| `cvs/`, `tailor/`, `jobs.json`, `tracker.csv`, `runs.log` | Your generated files and history | **no** (ignored) |
+| `config.json` | Your keys, password and settings | **no** |
+| `profile.json` | Your CV data | **no** |
+| `cvs/`, `tailor/`, `jobs.json`, `tracker.csv`, `runs.log` | Your generated files and history | **no** |
 
-`config.json` and `profile.json` hold private data and are listed in `.gitignore`. Don't commit them.
+## Job sources and credits
 
-## Notes
+Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com) and [Hacker News](https://news.ycombinator.com). Every job links back to its original post. Please apply through those links and support these sites.
 
-- Read every draft before you send it. Gemini is told to use only facts from `profile.json`, and the bot drops reworded lines that add tools or numbers your profile doesn't have, but you are still the final check.
-- If `runs.log` says the Gemini model was not found, set `gemini_model` to a current name from https://ai.google.dev/gemini-api/docs/models.
-- The window says "Another run is in progress" when `bot.lock` is left over from a run that was killed. The lock expires after 25 minutes, or you can delete `bot.lock`.
+To stay polite, the bot pauses between requests to the same site, backs off when a site says it's busy, checks robots.txt before reading company career pages, and fetches Remotive at most every 6 hours, as its API terms ask.
+
+## Disclaimer
+
+- This tool is for **personal job searching** only. Respect each job site's terms of service and robots.txt, and don't use it to re-publish listings or to collect emails.
+- Gemini can make mistakes. **Read every CV, cover letter and email before you send it.** You're responsible for what you send.
+- Job posts are written by strangers, and some may be scams. Never pay to apply, and be careful with anyone asking for money or personal documents.
+- There's no guarantee of jobs, interviews or replies.
+- The software is provided "as is", without warranty. See [LICENSE](LICENSE).
+
+## Contributing
+
+Ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Support
+
+If Job Hunter helped you land interviews, you can [buy me a coffee](https://www.buymeacoffee.com/YOUR-USERNAME) ☕ or star the repo ⭐.
+
+## License
+
+[MIT](LICENSE) © Ahsan Mehmood

@@ -1,0 +1,2 @@
+# Nothing to install: Job Hunter uses only the Python standard library (3.10+).
+# You also need Microsoft Edge (used to make the PDF CVs).

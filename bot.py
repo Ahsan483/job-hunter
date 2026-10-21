@@ -38,9 +38,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import urllib.robotparser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-UA = {"User-Agent": "Mozilla/5.0 (personal job search script)"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; JobHunter/1.0; +https://github.com/Ahsan483/job-hunter)"}
+MIN_GAP = 1.5  # seconds between two requests to the same site
+REMOTIVE_CACHE = os.path.join(HERE, "remotive_cache.json")
+REMOTIVE_TTL = 6 * 3600  # Remotive asks for at most 4 fetches a day
 TRACKER = os.path.join(HERE, "tracker.csv")
 RUNS_LOG = os.path.join(HERE, "runs.log")
 LOCK = os.path.join(HERE, "bot.lock")
@@ -143,11 +147,47 @@ def log(msg):
     print(msg, flush=True)
 
 
-def fetch(url, as_json=False, timeout=30):
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        raw = r.read(3_000_000).decode("utf-8", errors="replace")
-    return json.loads(raw) if as_json else raw
+_last_hit = {}
+
+
+def fetch(url, as_json=False, timeout=30, tries=3):
+    """GET with a pause between requests to the same site and backoff on 429/5xx."""
+    host = urllib.parse.urlparse(url).netloc
+    for attempt in range(tries):
+        wait = _last_hit.get(host, 0) + MIN_GAP - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _last_hit[host] = time.time()
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout) as r:
+                raw = r.read(3_000_000).decode("utf-8", errors="replace")
+            return json.loads(raw) if as_json else raw
+        except urllib.error.HTTPError as e:
+            if e.code != 429 and e.code < 500 or attempt == tries - 1:
+                raise
+            try:
+                delay = float(e.headers.get("Retry-After") or 0)
+            except ValueError:
+                delay = 0
+            time.sleep(min(max(delay, 5 * 2 ** attempt), 60))
+
+
+_robots = {}
+
+
+def allowed(url):
+    """robots.txt check for pages we crawl ourselves (company sites). No robots.txt means allowed."""
+    p = urllib.parse.urlparse(url)
+    base = f"{p.scheme}://{p.netloc}"
+    if base not in _robots:
+        rp = urllib.robotparser.RobotFileParser()
+        try:
+            rp.parse(fetch(base + "/robots.txt", timeout=10, tries=1).splitlines())
+        except Exception:
+            rp = None
+        _robots[base] = rp
+    rp = _robots[base]
+    return rp is None or rp.can_fetch(UA["User-Agent"], url)
 
 
 def text_of(s):
@@ -195,16 +235,24 @@ def money(lo, hi, cur="USD", period=""):
 
 
 def src_remotive():
-    out = []
-    for term in SEARCH:
-        d = fetch(f"https://remotive.com/api/remote-jobs?search={q(term)}", as_json=True)
-        for j in d.get("jobs", []):
-            out.append(dict(source="remotive", id=f"remotive-{j['id']}", title=j["title"], company=j["company_name"],
-                            url=j["url"], location=j.get("candidate_required_location", ""),
-                            text=text_of(j.get("description")), date=parse_date(j.get("publication_date")),
-                            salary=j.get("salary", ""), job_type=j.get("job_type", "").replace("_", " "),
-                            tags=", ".join(j.get("tags", []))))
-    return out
+    """One request for every software job, cached for 6 hours; the keyword filter runs on our side."""
+    try:
+        with open(REMOTIVE_CACHE, encoding="utf-8") as f:
+            cached = json.load(f)
+    except (OSError, ValueError):
+        cached = {}
+    if time.time() - cached.get("at", 0) < REMOTIVE_TTL:
+        jobs = cached.get("jobs", [])
+    else:
+        jobs = fetch("https://remotive.com/api/remote-jobs?category=software-dev", as_json=True).get("jobs", [])
+        with open(REMOTIVE_CACHE + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"at": time.time(), "jobs": jobs}, f)
+        os.replace(REMOTIVE_CACHE + ".tmp", REMOTIVE_CACHE)
+    return [dict(source="remotive", id=f"remotive-{j['id']}", title=j["title"], company=j["company_name"],
+                 url=j["url"], location=j.get("candidate_required_location", ""),
+                 text=text_of(j.get("description")), date=parse_date(j.get("publication_date")),
+                 salary=j.get("salary", ""), job_type=j.get("job_type", "").replace("_", " "),
+                 tags=", ".join(j.get("tags", []))) for j in jobs]
 
 
 def src_remoteok():
@@ -393,14 +441,18 @@ def careers_page_email(job):
     """Look for a published hiring address on the company's own site."""
     for host in company_sites(job):
         base = "https://" + host.removeprefix("www.")
+        site = host.removeprefix("www.")
         for path in ("/careers", "/jobs", "/join-us", "/contact", "/"):
             try:
-                page = fetch(base + path, timeout=15)
+                if not allowed(base + path):
+                    continue
+                page = fetch(base + path, timeout=15, tries=1)
             except Exception:
                 continue
             for e in find_emails_in_text(page):
-                local, _, domain = e.partition("@")
-                if HIRING_LOCAL.match(local) and host.removeprefix("www.").split(".")[-2] in domain:
+                local, _, domain = e.lower().partition("@")
+                same_site = site == domain or site.endswith("." + domain) or domain.endswith("." + site)
+                if HIRING_LOCAL.match(local) and same_site:
                     return e, base + path
     return None, None
 

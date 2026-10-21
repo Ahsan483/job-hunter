@@ -534,8 +534,9 @@ class App(tk.Tk):
 
     def open_job(self):
         j = self.selected()
-        if j:
-            webbrowser.open(j.get("apply") or j["url"])
+        url = j and (j.get("apply") or j["url"])
+        if url and url.lower().startswith(("https://", "http://")):
+            webbrowser.open(url)
 
     def copy_email(self):
         j = self.selected()

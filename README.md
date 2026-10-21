@@ -1,8 +1,40 @@
-# Remote Job Hunter
+# Job Hunter: Free AI Remote Job Search Bot (Python, Gemini, Gmail Drafts)
 
-A small Windows bot that finds remote jobs, writes a tailored CV and email for each match with Google Gemini (free tier), and saves them as **Gmail drafts**. It never sends anything: you read each draft and press Send yourself.
+**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 8 remote job boards at once, filters by your keywords, job age and region ("only open to Pakistan / worldwide"), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
 
-It searches Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the latest Hacker News "Who is hiring?" thread. It keeps jobs that match your keywords, are recent, and are remote. It then looks for an application email in the post or on the company's own careers page.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)](#what-you-need)
+[![No pip packages](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#what-you-need)
+[![Free Gemini API](https://img.shields.io/badge/AI-Gemini%20free%20tier-8E75B2.svg)](https://aistudio.google.com/app/apikey)
+
+> **Watch the 1-minute demo:** https://www.youtube.com/watch?v=4s38kwQLMh4
+
+Good for developers and freelancers looking for **remote jobs from Pakistan, India, Bangladesh, Africa or anywhere in the world**, and for anyone who wants to **automate job applications** without paying for an AI service.
+
+## Features
+
+- **Searches 8 remote job sources:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the latest Hacker News "Who is hiring?" thread.
+- **Smart filter:** keywords, words to exclude, maximum job age, maximum years required, and **"only open worldwide / to my region"** (for example Pakistan or South Asia).
+- **Finds the application email** in the job post or on the company's own careers page, so you can contact the recruiter or CEO directly.
+- **Tailored CV + cover letter for every job** from your own `profile.json`, exported as a PDF in **ATS format** (it uses Microsoft Edge to make the PDF).
+- **Gmail drafts, never auto-send.** You review every email before sending.
+- **Desktop GUI** (`Job Hunter.bat`): job list, fit scores, filters, one-click "Make CV + cover letter", skip list, tracker and run log.
+- **Upload your CV** (.pdf, .docx, .txt, .md) and Gemini builds your `profile.json` for you.
+- **Auto-run every 30 minutes** with a Windows scheduled task, switched on and off from the app.
+- **Runs inside Gemini's free limits** (configurable call and draft limits).
+- **No dependencies:** plain Python 3.10+, no `pip install`.
+
+## Quick start
+
+```bash
+git clone https://github.com/Ahsan483/job-hunter.git
+cd job-hunter
+copy config.example.json config.json    # add your Gmail app password + free Gemini key
+python -I gui.py                        # or double-click "Job Hunter.bat"
+```
+
+Full setup is below. It takes about 5 minutes.
 
 ## What you need
 
@@ -120,3 +152,42 @@ After that, the **Auto-run** button in the window turns it on and off.
 - Read every draft before you send it. Gemini is told to use only facts from `profile.json`, and the bot drops reworded lines that add tools or numbers your profile doesn't have, but you are still the final check.
 - If `runs.log` says the Gemini model was not found, set `gemini_model` to a current name from https://ai.google.dev/gemini-api/docs/models.
 - The window says "Another run is in progress" when `bot.lock` is left over from a run that was killed. The lock expires after 25 minutes, or you can delete `bot.lock`.
+
+## FAQ
+
+**Is Job Hunter really free?**
+Yes. The code is MIT-licensed. It uses the free tier of the Google Gemini API, and you use your own key. Gmail drafts are free too.
+
+**Can it find remote jobs for Pakistan, India or other regions?**
+Yes. Set `worldwide_only` and put your country or region in `my_region_words` (for example `["Pakistan", "South Asia"]`). Jobs that name your region, or that are open worldwide, are kept.
+
+**Does it apply to jobs automatically or send emails by itself?**
+No. It only creates Gmail **drafts**. You read each one and press Send.
+
+**Will it make up facts on my CV?**
+Gemini is told to use only facts from your `profile.json`, and the bot drops reworded lines that add tools or numbers your profile does not contain. Always read the result before you send it.
+
+**Which job sites does it search?**
+Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the Hacker News "Who is hiring?" thread.
+
+**Does it work on Mac or Linux?**
+Currently it targets Windows 10/11 (the GUI, the scheduled task and the Edge PDF export are Windows-specific). Pull requests for other systems are welcome.
+
+**How do I get a free Gemini API key?**
+Create one at https://aistudio.google.com/app/apikey and paste it into `config.json`.
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Good first contributions: new job sources, Linux/macOS support, better email extraction, tests, translations.
+
+## Disclaimer
+
+Use Job Hunter for personal job searching. Respect each job site's terms of service. It does not guarantee interviews, replies or jobs. You are responsible for everything you send.
+
+## License
+
+[MIT](LICENSE) © Ahsan Mehmood
+
+## Related searches
+
+remote job search bot, remote jobs for Pakistan, AI job application automation, tailored CV generator, ATS resume generator, cover letter generator, Gemini API project, free job hunting tool, Python job scraper, Gmail draft automation, Hacker News Who is hiring, RemoteOK, Remotive, We Work Remotely, Himalayas.

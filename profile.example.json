@@ -1,0 +1,54 @@
+{
+  "name": "Jane Doe",
+  "default_title": "Full-Stack Software Engineer | C# | ASP.NET Core | React",
+  "contact": {
+    "phone": "+1 555 010 0000",
+    "email": "jane.doe@example.com",
+    "linkedin": "linkedin.com/in/janedoe",
+    "github": "github.com/janedoe",
+    "portfolio": "https://janedoe.example.com"
+  },
+  "location": "Lisbon, Portugal (UTC+0), open to remote",
+  "years": "5+",
+  "default_summary": "Full-Stack Software Engineer with 5+ years of experience building web applications and APIs with C#, ASP.NET Core, React and SQL Server. Experienced in REST APIs, cloud deployments on Azure, and CI/CD, with a focus on performance and maintainable code.",
+  "experience": [
+    {
+      "id": "acme",
+      "company": "Acme Corp",
+      "place": "Remote",
+      "title": "Software Engineer",
+      "dates": "Jan 2023 – Present",
+      "bullets": [
+        "Built REST APIs with ASP.NET Core (.NET 8) serving 20K+ daily users.",
+        "Developed React + TypeScript dashboards with real-time updates over SignalR.",
+        "Cut a slow report query from 6s to under 1s by adding indexes and Redis caching.",
+        "Set up GitHub Actions CI/CD with Docker and automated xUnit tests."
+      ]
+    },
+    {
+      "id": "globex",
+      "company": "Globex",
+      "place": "Lisbon",
+      "title": "Junior .NET Developer",
+      "dates": "Jun 2020 – Dec 2022",
+      "note": "Full-time",
+      "bullets": [
+        "Maintained an ASP.NET MVC application and migrated modules to .NET Core.",
+        "Wrote stored procedures and optimized SQL Server queries.",
+        "Integrated Stripe payments and email notifications."
+      ]
+    }
+  ],
+  "projects": [
+    {"id": "tasker", "name": "Tasker", "text": "Team task tracker with boards, comments and notifications. ASP.NET Core, React, PostgreSQL."},
+    {"id": "shop", "name": "Mini Shop", "text": "Small e-commerce store with cart and checkout. Next.js, Stripe."}
+  ],
+  "skills": {
+    "Backend": ["C#", ".NET 8", "ASP.NET Core", "Entity Framework Core", "REST APIs"],
+    "Frontend": ["React", "TypeScript", "JavaScript", "SignalR"],
+    "Database": ["SQL Server", "PostgreSQL", "Redis"],
+    "Cloud & DevOps": ["Azure", "Docker", "GitHub Actions", "CI/CD"],
+    "Testing & Tools": ["xUnit", "Moq", "Postman", "Git"]
+  },
+  "education": "BSc Computer Science — University of Lisbon"
+}

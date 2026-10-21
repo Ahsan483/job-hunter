@@ -1,0 +1,24 @@
+# Secrets: Gmail app password and Gemini key
+config.json
+
+# Personal output and run state
+cvs/
+tailor/
+tracker.csv
+runs.log
+jobs.json
+jobs.json.tmp
+bot.lock
+
+__pycache__/
+*.pyc
+
+# Backups made by "Upload my CV"
+profile.backup-*.json
+gemini_state.json
+gemini_state.json.tmp
+
+# Your own CV data (copy profile.example.json to start)
+profile.json
+# Old Claude-in-Chrome instructions with personal details
+INSTRUCTIONS.md

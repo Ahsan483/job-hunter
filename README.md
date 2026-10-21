@@ -64,18 +64,34 @@ python -I bot.py
 ```
 This takes 1-3 minutes and ends with a line like `... | drafts 1`. Check Gmail → Drafts.
 
-## The window
+## The window (GUI)
 
-Double-click **Job Hunter.bat** (or run `python -I gui.py`).
+Start it by double-clicking **Job Hunter.bat**, or run:
+```
+python -I gui.py
+```
 
-- **Find jobs**: searches every site and lists the matches (no Gemini, no Gmail).
-- **Auto-draft best matches**: the same as a scheduled run.
-- Pick a job to read the full post, then:
+**Top bar**
+- **Find jobs**: searches every job site (1-3 min) and lists the matches. Uses no Gemini and no Gmail.
+- **Auto-draft best matches**: the same as a scheduled run. Gemini checks the fit, writes a tailored CV and email, and saves Gmail drafts.
+- **Gmail drafts**, **CVs folder**, **Tracker**, **Run log**: open your drafts, the generated PDFs, `tracker.csv` and `runs.log`.
+- **Settings**: fit score, draft limits, Gemini call limit and preferred model. **Edit Gmail / Gemini keys…** opens `config.json`.
+- **Auto-run**: turns the 30-minute scheduled task on or off (see below).
+
+**Your CV**
+- **Upload my CV**: Gemini reads your CV (.pdf, .docx, .txt or .md) and rebuilds `profile.json`. The old one is kept as `profile.backup-*.json`.
+- **My profile**: opens `profile.json` in Notepad so you can fix anything.
+- **Tailor CV to a job description…**: paste any job post (from LinkedIn, a company site, etc.) to get a tailored CV + cover letter for it.
+
+**Job filter bar**: keywords, words to exclude, max age, and "Only open worldwide / to my region". **Save & search** saves them to `config.json` (the scheduled run uses them too) and searches again.
+
+**Job list**
+- **Show** picks the list: ready to draft (has an email), apply on company site, all matches, done / skipped, or everything (rejected jobs show why).
+- **Search in list** filters by any text.
+- Click a job to read the full post, salary, type and tags, then:
   - **Draft email + CV**: for jobs that published an email address.
   - **Make CV + cover letter**: for jobs you apply to on the company site. The files go to `cvs/`.
-  - **Open job page**, **Copy email**, **Skip job**.
-- **Upload my CV** rebuilds `profile.json`. The old one is kept as `profile.backup-*.json`.
-- **Settings** changes the fit score and limits.
+  - **Open job page**, **Copy email**, **Skip job** (the bot won't draft it again).
 
 ## Run it every 30 minutes (optional)
 

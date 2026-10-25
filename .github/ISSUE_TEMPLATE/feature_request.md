@@ -1,11 +1,11 @@
 ---
-name: Feature request
-about: Suggest an idea or a new job site
+name: Feature request / new job source
+about: Suggest an improvement or a job site to add
 labels: enhancement
 ---
 
-**What would you like?**
+**What would you like to see?**
 
 **Why is it useful?**
 
-**For a new job site:** link to its API or RSS feed, and its terms of use if you know them.
+**Job site link (if you are suggesting a new source)**

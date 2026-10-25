@@ -1,21 +1,22 @@
 ---
 name: Bug report
-about: Something doesn't work
+about: Something broke or behaves wrongly
 labels: bug
 ---
 
-**What happened**
-<!-- What did you click or run, and what went wrong? -->
+**What happened?**
 
-**What you expected**
+**What did you expect?**
 
-**Log**
-<!-- Paste the last lines of the window's log or runs.log. Remove your email, name and any keys first! -->
-```
+**Steps to reproduce**
+1.
+2.
 
-```
-
-**Setup**
+**Environment**
 - Windows version:
 - Python version (`python --version`):
-- Started from: Job Hunter.bat / `python -I gui.py` / `python -I bot.py`
+- Edge installed? (yes/no)
+
+**Last lines of `runs.log`** (remove any email addresses, keys or personal details)
+```
+```

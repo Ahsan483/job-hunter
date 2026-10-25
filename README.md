@@ -1,8 +1,17 @@
-# Job Hunter
+# Job Hunter: Free AI Remote Job Search Bot (Python, Gemini, Gmail Drafts)
 
-**Find remote jobs in any field (software, finance, sales, SEO, support, design, writing, HR and more), get a tailored ATS-friendly CV + cover letter for each one, and have the application email waiting in your Gmail drafts.** Free Gemini AI, a simple Windows window, and nothing to `pip install`.
+**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 8 remote job boards at once, filters by your keywords, job age and region ("only open to Pakistan / worldwide"), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
 
-The bot never sends anything. You read each draft and press Send yourself.
+[![Download for Windows](https://img.shields.io/badge/download-JobHunterSetup.exe-2563eb.svg)](https://github.com/Ahsan483/job-hunter/releases/latest/download/JobHunterSetup.exe)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)](#requirements-running-from-source)
+[![No pip packages](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#requirements-running-from-source)
+[![Free Gemini API](https://img.shields.io/badge/AI-Gemini%20free%20tier-8E75B2.svg)](https://aistudio.google.com/app/apikey)
+
+> **Watch the 1-minute demo:** https://www.youtube.com/watch?v=4s38kwQLMh4
+
+Good for developers and freelancers looking for **remote jobs from Pakistan, India, Bangladesh, Africa or anywhere in the world**, and for anyone who wants to **automate job applications** without paying for an AI service.
 
 > 🎥 Made by **Ahsan Mehmood**. Follow on TikTok: [@YOUR-TIKTOK](https://www.tiktok.com/@YOUR-TIKTOK) · GitHub: [Ahsan483](https://github.com/Ahsan483)
 
@@ -97,8 +106,8 @@ The window is a set of frosted-glass cards over a slowly moving gradient. The gr
 - **Find jobs**: searches every job site and lists the matches.
 - **Auto-draft best matches**: Gemini checks the fit of the top matches, writes a tailored CV and email for each, and saves Gmail drafts.
 - **Gmail drafts**, **CVs folder**, **Tracker**, **Run log**: open your drafts, the PDFs, `tracker.csv` and `runs.log`.
-- **Settings**: fit score, draft limits, Gemini call limit and preferred model. **Edit Gmail / Gemini keys…** opens `config.json`.
-- **Auto-run**: turns the 30-minute schedule on or off (see below).
+- **Settings**: fit score, draft limits, Gemini call limit and preferred model. **Gmail & Gemini keys…** changes your keys.
+- **Auto-run**: sets up and turns on or off the 30-minute schedule (see below).
 
 **Your CV**
 - **Upload my CV**: rebuilds `profile.json` from your CV. The old one is kept as `profile.backup-*.json`.
@@ -157,8 +166,8 @@ python -I bot.py --import-cv cv.pdf # rebuild profile.json from your CV
 
 | Problem | Fix |
 |---|---|
-| Double-clicking `Job Hunter.bat` does nothing / "Python was not found" | Install Python 3.10+ from python.org and tick "Add python.exe to PATH". |
-| "config.json is missing gmail_address, gmail_app_password or gemini_api_key" | Fill in `config.json` (install step 4). |
+| Double-clicking `Job Hunter.bat` does nothing / "Python was not found" | Install Python 3.10+ from python.org and tick "Add python.exe to PATH". Or use the [installer](#download-for-windows-easiest), which needs no Python. |
+| "Gmail or Gemini is not connected yet" | Press **Settings → Gmail & Gemini keys…** (or fill in `config.json`, install step 4). |
 | "profile.json not found" | Press **Upload my CV**, or copy `profile.example.json` to `profile.json`. |
 | "Another run is in progress" | A run was killed halfway. Wait 25 minutes or delete `bot.lock`. |
 | "Microsoft Edge not found" | Install Edge from https://www.microsoft.com/edge. |
@@ -174,16 +183,45 @@ python -I bot.py --import-cv cv.pdf # rebuild profile.json from your CV
 | `bot.py` | Job search, Gemini tailoring, Gmail drafts | yes |
 | `gui.py` | The window | yes |
 | `cv.py` | Builds the CV / cover letter PDF | yes |
+| `jobhunter.py`, `installer/` | The installed JobHunter.exe and how it is built | yes |
 | `config.example.json`, `profile.example.json` | Templates to copy | yes |
 | `config.json` | Your keys, password and settings | **no** |
 | `profile.json` | Your CV data | **no** |
 | `cvs/`, `tailor/`, `jobs.json`, `tracker.csv`, `runs.log` | Your generated files and history | **no** |
+
+The installed app keeps the files that are not uploaded in `%APPDATA%\Job Hunter` instead of the program folder.
 
 ## Job sources and credits
 
 Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com) and [Hacker News](https://news.ycombinator.com). Every job links back to its original post. Please apply through those links and support these sites.
 
 To stay polite, the bot pauses between requests to the same site, backs off when a site says it's busy, checks robots.txt before reading company career pages, and fetches Remotive at most every 6 hours, as its API terms ask.
+
+## FAQ
+
+**Is Job Hunter really free?**
+Yes. The code is MIT-licensed. It uses the free tier of the Google Gemini API, and you use your own key. Gmail drafts are free too.
+
+**Do I need Python?**
+Not with the [Windows installer](#download-for-windows-easiest). Running from source needs Python 3.10+.
+
+**Can it find remote jobs for Pakistan, India or other regions?**
+Yes. Set `worldwide_only` and put your country or region in `my_region_words` (for example `["Pakistan", "South Asia"]`). Jobs that name your region, or that are open worldwide, are kept.
+
+**Does it apply to jobs automatically or send emails by itself?**
+No. It only creates Gmail **drafts**. You read each one and press Send.
+
+**Will it make up facts on my CV?**
+Gemini is told to use only facts from your `profile.json`, and the bot drops reworded lines that add tools or numbers your profile does not contain. Always read the result before you send it.
+
+**Which job sites does it search?**
+Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the Hacker News "Who is hiring?" thread.
+
+**Does it work on Mac or Linux?**
+Currently it targets Windows 10/11 (the GUI, the scheduled task and the Edge PDF export are Windows-specific). Pull requests for other systems are welcome.
+
+**How do I get a free Gemini API key?**
+Create one at https://aistudio.google.com/app/apikey. The window asks for it the first time it opens, with step-by-step help.
 
 ## Disclaimer
 
@@ -195,7 +233,7 @@ To stay polite, the bot pauses between requests to the same site, backs off when
 
 ## Contributing
 
-Ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Good first contributions: new job sources, Linux/macOS support, better email extraction, tests, translations.
 
 ## Support
 
@@ -204,3 +242,7 @@ If Job Hunter helped you land interviews, you can [buy me a coffee](https://www.
 ## License
 
 [MIT](LICENSE) © Ahsan Mehmood
+
+## Related searches
+
+remote job search bot, remote jobs for Pakistan, AI job application automation, tailored CV generator, ATS resume generator, cover letter generator, Gemini API project, free job hunting tool, Python job scraper, Gmail draft automation, Hacker News Who is hiring, RemoteOK, Remotive, We Work Remotely, Himalayas.

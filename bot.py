@@ -25,8 +25,10 @@ Usage:
 import base64
 import csv
 import datetime as dt
+import difflib
 import email.message
 import email.utils
+import hashlib
 import html
 import imaplib
 import json
@@ -102,10 +104,116 @@ def clean_words(v):
     return [w.strip() for w in v or [] if w.strip()]
 
 
-MATCH = word_re(DEFAULT_CONFIG["keywords"])
+# ---------- keyword matching ----------
+# People type a job the way they think of it ("remote SEO expert jobs", "seo speciliest"); job titles say
+# "SEO Specialist", "Head of SEO", "SEO Manager". So each keyword is cut down to the words that name the job,
+# and those words may appear in the title in any order, in another form (recruiter ~ recruiting) or with a typo.
+NOISE = {"remote", "online", "job", "jobs", "work", "vacancy", "vacancies", "opening", "openings", "hiring",
+         "position", "positions", "role", "roles", "wfh", "from", "home", "for", "of", "in", "the", "a", "an", "and",
+         "&", "-", "/", "|", "at", "with", "full", "time", "part", "fulltime", "parttime", "worldwide", "anywhere"}
+# Rank words: dropped too, unless what is left would be too broad ("Account Manager" stays as it is).
+RANK = {"expert", "specialist", "professional", "freelancer", "freelance", "guru", "ninja", "consultant",
+        "manager", "analyst", "executive", "officer", "associate", "strategist", "coordinator", "lead", "head",
+        "senior", "junior", "sr", "jr", "entry", "level", "intern", "internship", "trainee", "mid"}
+TOO_BROAD = {"account", "product", "project", "program", "data", "business", "office", "general", "technical",
+             "digital", "customer", "client", "team", "operations", "senior"}
+# Names for the same job; a keyword matching one also finds the others.
+ALIASES = [("seo", "search engine optimization", "search engine optimisation"),
+           ("ppc", "pay per click", "paid search", "google ads"), ("smm", "social media"),
+           ("va", "virtual assistant"), ("ea", "executive assistant"), ("hr", "human resources", "people operations"),
+           ("sdr", "sales development"), ("bdr", "business development"), ("cs", "customer success"),
+           ("csr", "customer service", "customer support", "customer care"), ("qa", "quality assurance"),
+           ("ux", "user experience"), ("ui", "user interface"), ("dotnet", ".net"), ("ai trainer", "ai tutor"),
+           ("bookkeeper", "bookkeeping"), ("translator", "translation"), ("copywriter", "copywriting")]
+# A word ending in one of these names a job or activity; the same stem with another ending is the same work
+# (recruiter, recruiting, recruitment), but the bare stem is not ("marketing" is not "markets").
+JOB_ENDING = "ments?|ings?|ers?|ors?|ists?|ants?|ions?"
+TOKEN = re.compile(r"[a-z0-9][a-z0-9.#+]*[a-z0-9#+]|[a-z0-9]|\.net|&", re.I)
+
+
+def stem(w):
+    s = re.sub(rf"({JOB_ENDING}|ies|es|s|e|y)$", "", w)
+    return s if len(s) >= 4 else w
+
+
+def near(w, words):
+    """True if w is one of words or a likely typo of one (speciliest ~ specialist, bookeeper ~ bookkeeping).
+    Stems are compared only when both words have a job ending, so "accountant" is never "account"."""
+    ratio = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
+    job = lambda x: re.search(rf"({JOB_ENDING})$", x)
+    return w in words or len(w) >= 5 and any(
+        abs(len(w) - len(x)) <= 3 and not (w.startswith(x) or x.startswith(w))  # account is not a typo of accountant
+        and (ratio(w, x) >= 0.8 or job(w) and job(x) and ratio(stem(w), stem(x)) >= 0.85)
+        for x in words)
+
+
+def word_pattern(w):
+    """Regex for one keyword word: other forms of a long plain word count (recruiter ~ recruiting, recruitment)."""
+    if not re.fullmatch(r"[a-z]{5,}", w):
+        return (r"\b" if w[0].isalnum() else "") + re.escape(w) + (r"\b" if w[-1].isalnum() else "")
+    s = stem(w)
+    if s == w:
+        return rf"\b{w}(?:s|es)?\b"
+    if re.search(rf"({JOB_ENDING})$", w):
+        return rf"\b{s}(?:{JOB_ENDING})\b"
+    return rf"\b{s}(?:s|es|e|y|ies)?\b"  # sales ~ sale
+
+
+def job_words(keyword):
+    """The words of a keyword that name the job: 'remote SEO expert jobs' -> ['seo']."""
+    words = [w.lower() for w in TOKEN.findall(keyword)]
+    words = [w for w in words if w not in NOISE] or words
+    core = [w for w in words if not near(w, RANK)]
+    return core if core and not (len(core) == 1 and core[0] in TOO_BROAD) else words
+
+
+class Keyword:
+    """One keyword, matched loosely against job titles and exactly against job text."""
+
+    def __init__(self, keyword):
+        self.keyword, self.words = keyword, job_words(keyword)
+        phrase = " ".join(self.words)
+        self.aliases = next((list(a) for a in ALIASES if phrase in a), [phrase])
+        self.alias_res = [word_re([a]) for a in self.aliases]
+        self.parts = [(w, re.compile(word_pattern(w), re.I)) for w in self.words]
+        self.exact = word_re([keyword])  # job text names skills in passing, so it must say the keyword itself
+
+    def in_title(self, title):
+        if any(r.search(title) for r in self.alias_res):
+            return True
+        tokens = [t.lower() for t in TOKEN.findall(title)]
+        return all(rx.search(title) or (len(w) >= 5 and near(w, [t for t in tokens if t.isalpha()]))
+                   for w, rx in self.parts)
+
+    def in_text(self, text):
+        return bool(self.exact and self.exact.search(text))
+
+    def search_term(self):
+        return self.aliases[0]  # what goes into the job sites' search boxes: "seo", not "seo expert"
+
+
+class Matcher:
+    def __init__(self, keywords):
+        self.keywords = [Keyword(k) for k in keywords]
+
+    def __call__(self, title, text=None):
+        return any(k.in_title(title) or (text is not None and k.in_text(text)) for k in self.keywords)
+
+    def explain(self):
+        """How the keywords are read, for the run log, only where that differs from what was typed."""
+        out = []
+        for k in self.keywords:
+            shown = " ".join(k.words)
+            if shown != k.keyword.lower() or len(k.aliases) > 1:
+                also = [a for a in k.aliases if a != shown]
+                out.append(f"'{k.keyword}' → titles with {shown}" + (f" (or {', '.join(also)})" if also else ""))
+        return out
+
+
+MATCH = Matcher(DEFAULT_CONFIG["keywords"])
 TITLE_ONLY = False
 EXCLUDE = None
-SEARCH = DEFAULT_CONFIG["keywords"][:6]  # terms sent to the sites that have a search
+SEARCH = DEFAULT_CONFIG["keywords"][:10]  # terms sent to the sites that have a search
 WORLDWIDE_ONLY = True
 REGION = None  # regex of my_region_words
 MAX_YEARS = 8
@@ -126,7 +234,8 @@ FIELDS = DEFAULT_CONFIG["job_fields"]
 def apply_filters(cfg):
     global MATCH, TITLE_ONLY, EXCLUDE, SEARCH, MAX_AGE_DAYS, WORLDWIDE_ONLY, REGION, MAX_YEARS, FIELDS
     kws = clean_words(cfg.get("keywords")) or DEFAULT_CONFIG["keywords"]
-    MATCH, SEARCH = word_re(kws), kws[:6]
+    MATCH = Matcher(kws)
+    SEARCH = list(dict.fromkeys(k.search_term() for k in MATCH.keywords))[:10]
     TITLE_ONLY = bool(cfg.get("keywords_in_title"))
     FIELDS = [f.lower() for f in clean_words(cfg.get("job_fields"))
               if f.lower() in WWR_FEEDS or f.lower() == "all"] or DEFAULT_CONFIG["job_fields"]
@@ -431,7 +540,7 @@ def open_to_me(job):
 
 def prefilter(job, now):
     blob = f"{job['title']}\n{job['location']}\n{job['text']}"
-    if not MATCH.search(job["title"] if TITLE_ONLY else job["title"] + " " + job["text"][:4000]):
+    if not MATCH(job["title"], None if TITLE_ONLY else job["text"][:4000]):
         return "no keyword match"
     if EXCLUDE and EXCLUDE.search(job["title"]):
         return "excluded word in title"
@@ -583,6 +692,11 @@ def gemini_state():
         return {}
 
 
+def key_id(key):
+    """Short fingerprint of a key, so the state file knows which key it belongs to without storing it."""
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
 def save_gemini_state(s):
     with open(GEMINI_STATE + ".tmp", "w", encoding="utf-8") as f:
         json.dump(s, f, indent=1)
@@ -611,8 +725,26 @@ def gemini_models(cfg, state):
             state["listed"] = time.time()
         except Exception as e:
             log(f"  could not list Gemini models ({e.__class__.__name__}), using the ones in config.json")
-    chosen = [cfg.get("gemini_model"), cfg.get("gemini_fallback_model", "gemini-flash-lite-latest")]
-    return list(dict.fromkeys([m for m in chosen if m] + sorted(state.get("models", []), key=model_rank)))
+    # gemini_model "" means Auto: the best model first. A chosen model goes first, then its fallback.
+    chosen = ([cfg["gemini_model"], cfg.get("gemini_fallback_model", "gemini-flash-lite-latest")]
+              if cfg.get("gemini_model") else [])
+    found = sorted(state.get("models", []), key=model_rank) or ["gemini-flash-latest", "gemini-flash-lite-latest"]
+    return list(dict.fromkeys([m for m in chosen if m] + found))
+
+
+def model_status(state, model):
+    """(ok, text) for one model, as the window's model menu shows it."""
+    now = time.time()
+    if state.get("blocked", {}).get(model, 0) > now:
+        back = time.strftime("%d %b %H:%M", time.localtime(state["blocked"][model]))
+        why = state.get("why", {}).get(model, "blocked")
+        return False, f"{why}, checked again {back}" if why.startswith(("no free", "not avail")) else f"{why} until {back}"
+    u = state.get("usage", {}).get(model, {})
+    if u.get("day") == dt.date.today().isoformat():
+        return True, f"working, {u['calls']} call{'s' if u['calls'] != 1 else ''} today"
+    if u.get("ok"):
+        return True, f"last worked {time.strftime('%d %b %H:%M', time.localtime(u['ok']))}"
+    return True, "not tried yet"
 
 
 def answer_json(d):
@@ -646,7 +778,10 @@ def gemini(cfg, prompt, attach=None):
     if attach:
         parts.append({"inline_data": {"mime_type": attach[0], "data": base64.b64encode(attach[1]).decode()}})
     state = gemini_state()
-    blocked = state.setdefault("blocked", {})
+    if state.get("key") != key_id(cfg["gemini_api_key"]):  # new key: its quotas and model list are not the old key's
+        state = {"key": key_id(cfg["gemini_api_key"])}
+    blocked, why = state.setdefault("blocked", {}), state.setdefault("why", {})
+    usage = state.setdefault("usage", {})
     models = gemini_models(cfg, state)
     last, tried, back_at = "no response", 0, []
     for model in models:
@@ -668,6 +803,10 @@ def gemini(cfg, prompt, attach=None):
                     res = answer_json(json.loads(r.read().decode()))
                 if model != models[0]:
                     log(f"  (answered by Gemini model {model})")
+                today = dt.date.today().isoformat()
+                u = usage.get(model) if usage.get(model, {}).get("day") == today else {"day": today, "calls": 0}
+                usage[model] = {**u, "calls": u["calls"] + 1, "ok": time.time()}
+                state.pop("refused", None)
                 save_gemini_state(state)
                 return res
             except urllib.error.HTTPError as e:
@@ -683,6 +822,8 @@ def gemini(cfg, prompt, attach=None):
                         continue
                     for m in {model, owner} - {None}:
                         blocked[m] = time.time() + wait
+                        why[m] = ("no free tier for your key" if wait >= 7 * 86400 else
+                                  "daily free limit used up" if wait >= 3600 else "per-minute limit hit")
                     save_gemini_state(state)
                     log(f"  {model} is out of free quota until "
                         f"{time.strftime('%d %b %H:%M', time.localtime(time.time() + wait))}, trying another model")
@@ -691,7 +832,15 @@ def gemini(cfg, prompt, attach=None):
                     continue
                 elif e.code == 404:
                     blocked[model] = time.time() + 86400
+                    why[model] = "not available to your key"
                     save_gemini_state(state)
+                elif e.code in (401, 403) or "API_KEY_INVALID" in json.dumps(err):
+                    # the key or its whole Google project is refused: every other model would fail the same way
+                    state["refused"] = {"at": time.time(), "message": err.get("message", "")[:150]}
+                    save_gemini_state(state)
+                    raise RuntimeError(f"{NO_MODEL}: Google refused this Gemini key ({err.get('message', '')[:150]}). Make a new key "
+                                       f"in a new project at aistudio.google.com/apikey (Create API key > Create "
+                                       f"project), then paste it in Settings > Gmail & Gemini keys.")
                 break  # anything else (bad request, overloaded, not found): next model
             except (TimeoutError, urllib.error.URLError, OSError) as e:
                 last = f"Gemini timeout/network error ({model}): {e}"
@@ -858,10 +1007,36 @@ def check_config(cfg):
                            "(or fill in gmail_address, gmail_app_password and gemini_api_key in config.json)")
 
 
-def take_lock():
-    if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 1500:
+def pid_alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes  # os.kill on Windows would terminate the process, so ask for its exit code instead
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
         return False
-    open(LOCK, "w").close()
+    code = ctypes.c_ulong()
+    k32.GetExitCodeProcess(h, ctypes.byref(code))
+    k32.CloseHandle(h)
+    return code.value == 259  # STILL_ACTIVE
+
+
+def take_lock():
+    """The lock holds the PID of the run that owns it; a run that was killed leaves a lock nobody owns."""
+    if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 1500:
+        try:
+            with open(LOCK, encoding="utf-8") as f:
+                owner = int(f.read().strip())
+        except (OSError, ValueError):
+            owner = None  # an old empty lock: trust its age
+        if owner is None or pid_alive(owner):
+            return False
+    with open(LOCK, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
     return True
 
 
@@ -1185,6 +1360,8 @@ def main():
     try:
         cfg = load_config()
         apply_filters(cfg)
+        for line in MATCH.explain():
+            log(f"Keyword {line}")
         if not dry:
             check_config(cfg)
         now = dt.datetime.now(dt.timezone.utc)
@@ -1202,6 +1379,9 @@ def main():
         candidates = [j for j in jobs if j["status"] == STATUS_READY]
         stats["candidates"] = len(candidates)
         log(f"filter: {reasons}")
+        if all(j["status"] == STATUS_REJECTED for j in jobs) and reasons.get("no keyword match", 0) > len(jobs) / 2:
+            log("Tip: no job title matched. Try fewer or other words, a longer Max age, or tick a Job type, "
+                "which brings its common title variations.")
         for c in candidates:
             log(f"CANDIDATE [{c['source']}] {c['company']} | {c['title'][:80]} | {c['email']} ({c['email_src']})")
         for c in jobs:

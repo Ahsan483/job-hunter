@@ -22,6 +22,10 @@ import webbrowser
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
+# python -I leaves the script's folder off sys.path; bot.py sits next to this file.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bot  # noqa: E402
+
 # The installed JobHunter.exe sits in a read-only program folder, so it keeps your files in %APPDATA%\Job Hunter.
 FROZEN = getattr(sys, "frozen", False)
 HERE = (os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Job Hunter") if FROZEN
@@ -33,6 +37,8 @@ JOBS_FILE = os.path.join(HERE, "jobs.json")
 CONFIG = os.path.join(HERE, "config.json")
 TRACKER = os.path.join(HERE, "tracker.csv")
 PROFILE = os.path.join(HERE, "profile.json")
+LOCK = os.path.join(HERE, "bot.lock")
+AUTO_MODEL = "Auto: best free model that is not at its limit"
 TASK = "Remote Job Hunter"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -64,32 +70,62 @@ SETTINGS = [("min_fit_score", "Minimum fit score (0-100)", int),
 
 # Job type -> (keywords, We Work Remotely categories from bot.WWR_FEEDS, keywords must be in the title).
 # Words like "Sales" or "Finance" are in almost every job ad, so most presets match on the title only.
-# Put the most important keywords first: the sites that have a search get the first six.
+# Put the most important keywords first: the sites that have a search get the first ten.
 PRESETS = {
     "Software / .NET": (DEFAULT_KEYWORDS, ["software"], False),
     "Software (any stack)": (["Developer", "Engineer", "Programmer", "Full Stack", "Backend", "Frontend"],
                              ["software", "devops"], True),
-    "Finance / Accounting": (["Accountant", "Accounting", "Bookkeeper", "Finance", "Financial", "Controller",
-                              "Payroll", "FP&A", "Tax", "Auditor"], ["finance & management"], True),
-    "Sales": (["Sales", "Account Executive", "Business Development", "SDR", "BDR", "Account Manager"],
-              ["sales & marketing"], True),
-    "SEO / Marketing": (["SEO", "Marketing", "Growth", "Social Media", "PPC", "Content"],
-                        ["sales & marketing", "other"], True),
-    "Customer support": (["Customer Support", "Customer Success", "Customer Service", "Support Specialist",
-                          "Support Agent", "Help Desk"], ["customer support"], True),
+    "SEO / Digital marketing": (["SEO", "Marketing", "Social Media", "PPC", "Google Ads", "Email Marketing",
+                                 "Content Marketing", "Digital Marketing", "Paid Media", "Performance Marketing",
+                                 "Growth", "Media Buyer", "Community Manager"], ["sales & marketing", "other"], True),
+    "Writing / Content": (["Writer", "Copywriter", "Content", "Editor", "Proofreader", "Ghostwriter",
+                           "Content Strategist", "Blog"], ["other", "sales & marketing"], True),
+    "Finance / Accounting": (["Accountant", "Bookkeeper", "Accounting", "Accounts Payable", "Accounts Receivable",
+                              "Payroll", "Financial Analyst", "Finance", "Financial", "FP&A", "Controller", "Tax",
+                              "Auditor", "Billing"], ["finance & management"], True),
+    "Sales / Business development": (["Sales", "SDR", "BDR", "Sales Development", "Business Development",
+                                      "Lead Generation", "Appointment Setter", "Account Executive",
+                                      "Account Manager", "CRM", "Inside Sales", "Partnerships", "Customer Success"],
+                                     ["sales & marketing"], True),
+    "Customer support / success": (["Customer Support", "Customer Success", "Customer Service", "Technical Support",
+                                    "Support Specialist", "Support Agent", "Support Representative", "Live Chat",
+                                    "Chat Support", "Help Desk", "Helpdesk", "Client Services", "Moderator"],
+                                   ["customer support"], True),
+    "Operations / Admin / Virtual assistant": (["Virtual Assistant", "Executive Assistant", "Operations",
+                                                "Administrative", "Admin Assistant", "Project Coordinator",
+                                                "Data Entry", "Personal Assistant", "Office Manager", "Coordinator",
+                                                "Workforce Management"], ["other", "finance & management"], True),
+    "HR / Recruiting": (["Recruiter", "Sourcer", "Talent Acquisition", "Recruiting", "Recruitment", "HR",
+                         "Human Resources", "People Operations", "People Partner", "Talent"],
+                        ["finance & management", "other"], True),
+    "AI training / Research": (["AI Trainer", "AI Training", "Data Annotator", "Annotation", "Annotator",
+                                "Data Labeling", "Rater", "Evaluator", "Search Quality", "AI Tutor", "RLHF",
+                                "Data Quality", "Research Assistant", "Online Researcher"], ["other", "software"],
+                               True),
+    "Translation / Transcription": (["Translator", "Translation", "Transcription", "Transcriptionist", "Interpreter",
+                                     "Localization", "Linguist", "Subtitler", "Captioner"], ["other"], True),
+    "Teaching / Tutoring": (["Tutor", "Teacher", "Instructor", "ESL", "English Teacher", "Curriculum",
+                             "Instructional Designer"], ["other"], True),
     "Design": (["Designer", "UI", "UX", "Graphic", "Illustrator", "Motion"], ["design"], True),
-    "Writing / Content": (["Writer", "Copywriter", "Editor", "Content", "Proofreader", "Translator"],
-                          ["other", "sales & marketing"], True),
     "Data / Analytics": (["Data Analyst", "Data Scientist", "Analytics", "Business Intelligence", "BI",
                           "Data Engineer"], ["software", "other"], True),
-    "HR / Recruiting": (["Recruiter", "Recruiting", "HR", "Human Resources", "Talent", "People"],
-                        ["finance & management", "other"], True),
-    "Virtual assistant / Admin": (["Virtual Assistant", "Executive Assistant", "Administrative", "Admin",
-                                   "Data Entry", "Operations"], ["other"], True),
     "Project / Product management": (["Project Manager", "Product Manager", "Program Manager", "Scrum Master",
                                       "Product Owner"], ["product", "finance & management"], True),
 }
 CUSTOM = "Custom (my own keywords)"  # reads every We Work Remotely category
+
+
+def combine(names):
+    """Keywords, We Work Remotely categories and title-only for several job types searched together.
+    Keywords are interleaved so the first ten (the ones sent to search boxes) cover every chosen type."""
+    lists = [PRESETS[n][0] for n in names]
+    kws = []
+    for i in range(max(map(len, lists), default=0)):
+        for words in lists:
+            if i < len(words) and words[i].lower() not in (k.lower() for k in kws):
+                kws.append(words[i])
+    fields = list(dict.fromkeys(f for n in names for f in PRESETS[n][1]))
+    return kws, fields, any(PRESETS[n][2] for n in names)
 
 LOG_FONT = ("Consolas", 10)
 ROW = "  {:<12}{:<15}{:<28}{:<54}{}\n"
@@ -201,6 +237,20 @@ KEY_FIELDS = [
      [("Turn on 2-Step Verification", "https://myaccount.google.com/signinoptions/twosv"),
       ("Open App passwords", "https://myaccount.google.com/apppasswords")]),
 ]
+
+
+def lock_owner():
+    """PID of the bot run that holds bot.lock, or None when no live bot process owns it."""
+    try:
+        with open(LOCK, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+        r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
+                           text=True, creationflags=NO_WINDOW, timeout=10)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    # Windows reuses PIDs: only a Python or Job Hunter process can be the bot.
+    name = r.stdout.split(",")[0].strip().strip('"').lower()
+    return pid if name in ("python.exe", "pythonw.exe", "jobhunter.exe") else None
 
 
 def test_gmail(address, password, host="imap.gmail.com"):
@@ -319,7 +369,7 @@ class App(tk.Tk):
         self.geometry("1280x800")
         self.minsize(900, 600)
         self.jobs, self.by_iid, self.mtime = [], {}, 0
-        self.proc, self.out = None, queue.Queue()
+        self.proc, self.out, self.stopped = None, queue.Queue(), False
         self.sort_col, self.sort_rev = "Posted", False
         self.in_table = False
         self.style_widgets()
@@ -467,6 +517,8 @@ class App(tk.Tk):
             b = ttk.Button(bar, text=text, style="Big.TButton", command=cmd)
             b.pack(side="left", padx=(0, 8))
             self.busy_buttons.append(b)
+        # Not a busy button: it must work while a run is going, including one started by Auto-run.
+        ttk.Button(bar, text="⏹  Stop run", command=self.stop_run).pack(side="left", padx=(0, 8))
         sep = tk.Frame(bar, width=1, bg=LINE)
         sep.solid = True
         sep.pack(side="left", fill="y", padx=8, pady=4)
@@ -490,6 +542,19 @@ class App(tk.Tk):
         self.profile_lbl.pack(side="left", padx=(8, 0))
         self.show_profile()
 
+        row = c.row(pady=(8, 0))
+        c.label(row, "AI model:", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 8))
+        self.model_var, self.model_of, self.model_mtime = tk.StringVar(), {}, 0
+        cb = self.model_cb = ttk.Combobox(row, textvariable=self.model_var, state="readonly", width=70,
+                                          postcommand=self.fill_models)
+        cb.pack(side="left", padx=(0, 6))
+        cb.bind("<<ComboboxSelected>>", lambda e: self.pick_model())
+        self.model_btn = ttk.Button(row, text="↻  Check models", command=self.check_models)
+        self.model_btn.pack(side="left", padx=(0, 6))
+        self.model_lbl = c.label(row, muted=True)
+        self.model_lbl.pack(side="left", padx=(8, 0))
+        self.fill_models()
+
     def show_profile(self):
         try:
             with open(PROFILE, encoding="utf-8") as f:
@@ -498,6 +563,88 @@ class App(tk.Tk):
                                          f"{len(p['experience'])} roles  (profile.json)")
         except (OSError, ValueError, KeyError):
             self.profile_lbl.config(text="No profile yet. Press Upload my CV.")
+
+    def model_state(self):
+        """gemini_state.json, or an empty state when it belongs to an older key."""
+        cfg = read_config()
+        state = bot.gemini_state()
+        if not has_key(cfg, "gemini_api_key") or state.get("key") != bot.key_id(cfg["gemini_api_key"]):
+            return cfg, {}
+        return cfg, state
+
+    def fill_models(self):
+        """Every model your key can use, with what the bot last saw: working, at its limit and until when."""
+        cfg, state = self.model_state()
+        models = sorted(state.get("models", []), key=bot.model_rank)
+        current = cfg.get("gemini_model", bot.DEFAULT_CONFIG["gemini_model"])
+        if current and current not in models:
+            models.insert(0, current)
+        self.model_of = {AUTO_MODEL: ""}
+        usable = 0
+        for m in models:
+            ok, text = bot.model_status(state, m)
+            usable += ok
+            self.model_of[f"{'✓' if ok else '⛔'}  {m}   ·   {text}"] = m
+        self.model_var.set(next((k for k, m in self.model_of.items() if m == current), AUTO_MODEL))
+        self.model_cb.config(values=list(self.model_of))
+        if state.get("refused"):
+            self.model_lbl.config(text=f"⚠ Google refused your key: {state['refused']['message'][:70]}. "
+                                       "Make a new key (Settings > Gmail & Gemini keys).")
+        elif not state.get("models"):
+            self.model_lbl.config(text="Press Check models to see which models your key can use.")
+        else:
+            self.model_lbl.config(text=f"{usable} of {len(models)} models usable right now. "
+                                       "Others are used when the chosen one is at its limit.")
+
+    def pick_model(self):
+        model = self.model_of.get(self.model_var.get(), "")
+        cfg, state = self.model_state()
+        if model and state.get("blocked", {}).get(model, 0) > dt.datetime.now().timestamp():
+            ok, text = bot.model_status(state, model)
+            if not messagebox.askyesno("AI model", f"{model}: {text}.\n\nGoogle may still refuse it until then. "
+                                       "Try it anyway on the next run?", parent=self):
+                self.fill_models()
+                return
+            if self.proc or lock_owner():
+                messagebox.showinfo("AI model", "A run is in progress. Try again when it has finished.", parent=self)
+                self.fill_models()
+                return
+            for k in ("blocked", "why"):
+                state.get(k, {}).pop(model, None)
+            bot.save_gemini_state(state)
+        cfg["gemini_model"] = model
+        with open(CONFIG, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        self.write_log(f"\nAI model: {model or 'Auto'}"
+                       + (" (other free models take over when it is at its limit)\n" if model else "\n"))
+        self.fill_models()
+
+    def check_models(self):
+        """Ask Google which models this key can use now (the bot also does this once a day)."""
+        cfg, state = self.model_state()
+        if not has_key(cfg, "gemini_api_key"):
+            self.keys()
+            return
+        if self.proc or lock_owner():
+            self.model_lbl.config(text="A run is in progress. Check models when it has finished.")
+            return
+        self.model_btn.state(["disabled"])
+        self.model_lbl.config(text="Asking Google …")
+
+        def work():
+            new = {**state, "key": bot.key_id(cfg["gemini_api_key"]), "listed": 0}
+            bot.gemini_models(cfg, new)
+            self.after(0, done, new)
+
+        def done(new):
+            self.model_btn.state(["!disabled"])
+            if not new.get("listed"):
+                self.model_lbl.config(text="Could not reach Google. Check your internet connection and the key.")
+                return
+            bot.save_gemini_state(new)
+            self.fill_models()
+
+        threading.Thread(target=work, daemon=True).start()
 
     def build_filters(self):
         # What the bot looks for. Saved in config.json, so scheduled runs use it too.
@@ -509,13 +656,20 @@ class App(tk.Tk):
         self.pk_only = tk.BooleanVar(value=cfg.get("worldwide_only", cfg.get("pakistan_only", True)))
         self.title_only = tk.BooleanVar(value=bool(cfg.get("keywords_in_title")))
         self.preset = tk.StringVar()
+        mine = [k.strip().lower() for k in self.kw.get().split(",")]
+        picked = [n for n in cfg.get("job_types") or [] if n in PRESETS] or \
+            [n for n, (kws, _, _) in PRESETS.items() if [k.lower() for k in kws] == mine]
+        self.types = {n: tk.BooleanVar(value=n in picked) for n in PRESETS}
 
         top = c.row()
         c.label(top, "Job filter", font=("Segoe UI", 10, "bold")).pack(side="left")
         c.label(top, "Job type:").pack(side="left", padx=(14, 4))
-        cb = ttk.Combobox(top, textvariable=self.preset, values=list(PRESETS) + [CUSTOM], state="readonly", width=28)
-        cb.pack(side="left", padx=(0, 14))
-        cb.bind("<<ComboboxSelected>>", lambda e: self.use_preset())
+        mb = ttk.Menubutton(top, textvariable=self.preset, width=40)
+        menu = tk.Menu(mb, tearoff=False, font=("Segoe UI", 10))
+        for n in PRESETS:  # tick several to search them together
+            menu.add_checkbutton(label=n, variable=self.types[n], command=self.use_preset)
+        mb["menu"] = menu
+        mb.pack(side="left", padx=(0, 14))
         c.check(top, "Keywords in title only", self.title_only).pack(side="left", padx=(0, 12))
         c.check(top, "Only open worldwide / to my region", self.pk_only).pack(side="left", padx=(0, 12))
         c.label(top, "Saved for the 30-minute auto-run too", muted=True).pack(side="right")
@@ -533,16 +687,25 @@ class App(tk.Tk):
         self.show_preset()
         self.kw.trace_add("write", lambda *a: self.show_preset())
 
-    def show_preset(self):
-        """Name the preset the keywords come from, or Custom once you have typed your own."""
+    def picked_types(self):
+        """The ticked job types, or [] once the keywords are your own."""
+        picked = [n for n, v in self.types.items() if v.get()]
         mine = [w.strip().lower() for w in self.kw.get().split(",") if w.strip()]
-        self.preset.set(next((n for n, (kws, _, _) in PRESETS.items() if [k.lower() for k in kws] == mine), CUSTOM))
+        return picked if picked and [k.lower() for k in combine(picked)[0]] == mine else []
+
+    def show_preset(self):
+        """Name the ticked job types the keywords come from, or Custom once you have typed your own."""
+        picked = self.picked_types()
+        self.preset.set(CUSTOM if not picked else picked[0] if len(picked) == 1
+                        else f"{picked[0]} + {len(picked) - 1} more")
 
     def use_preset(self):
-        if self.preset.get() in PRESETS:
-            kws, _, title_only = PRESETS[self.preset.get()]
+        picked = [n for n, v in self.types.items() if v.get()]
+        if picked:
+            kws, _, title_only = combine(picked)
             self.kw.set(", ".join(kws))
             self.title_only.set(title_only)
+        self.show_preset()
 
     def build_body(self):
         c = self.c_table = Card(self)
@@ -662,6 +825,12 @@ class App(tk.Tk):
         try:
             if os.path.getmtime(JOBS_FILE) != self.mtime:
                 self.load_jobs()
+        except OSError:
+            pass
+        try:  # a run just used a model or hit a limit
+            if os.path.getmtime(bot.GEMINI_STATE) != self.model_mtime:
+                self.model_mtime = os.path.getmtime(bot.GEMINI_STATE)
+                self.fill_models()
         except OSError:
             pass
         self.after(3000, self.watch_file)
@@ -787,11 +956,35 @@ class App(tk.Tk):
             pass
         self.after(100, self.pump)
 
+    def stop_run(self):
+        """Stop this window's run, or the one holding bot.lock (Auto-run, another window), and free the lock."""
+        pid = self.proc.pid if self.proc else lock_owner()
+        if pid is None:
+            if os.path.exists(LOCK):  # left behind by a run that was killed
+                os.remove(LOCK)
+                self.write_log("\n■ Cleared a leftover lock from a run that had already ended.\n", "head")
+            else:
+                self.status_lbl.config(text="No run in progress.")
+            return
+        if not messagebox.askyesno("Stop run", "Stop the run that is in progress?\n\n"
+                                   "Drafts it already made stay in Gmail.", parent=self):
+            return
+        self.stopped = self.proc is not None
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                       creationflags=NO_WINDOW, timeout=15)
+        try:
+            os.remove(LOCK)
+        except OSError:
+            pass
+        self.write_log("\n■ Run stopped.\n", "head")
+        self.status_lbl.config(text="Stopped. " + dt.datetime.now().strftime("%H:%M"))
+
     def finished(self):
         self.proc = None
         self.bar.stop()
         self.bar.pack_forget()
-        self.status_lbl.config(text="Done. " + dt.datetime.now().strftime("%H:%M"))
+        self.status_lbl.config(text=("Stopped. " if self.stopped else "Done. ") + dt.datetime.now().strftime("%H:%M"))
+        self.stopped = False
         for b in self.busy_buttons:
             b.state(["!disabled"])
         self.load_jobs()
@@ -993,9 +1186,11 @@ class App(tk.Tk):
             messagebox.showerror("Job filter", "Max age must be a number of days.")
             return False
         cfg = read_config()
-        fields = PRESETS[self.preset.get()][1] if self.preset.get() in PRESETS else ["all"]
+        picked = self.picked_types()
+        fields = combine(picked)[1] if picked else ["all"]
         new = dict(keywords=words(self.kw), exclude_keywords=words(self.excl), max_job_age_days=age,
-                   worldwide_only=self.pk_only.get(), keywords_in_title=self.title_only.get(), job_fields=fields)
+                   worldwide_only=self.pk_only.get(), keywords_in_title=self.title_only.get(), job_fields=fields,
+                   job_types=picked)
         if any(cfg.get(k) != v for k, v in new.items()):
             cfg.update(new)
             cfg.pop("pakistan_only", None)

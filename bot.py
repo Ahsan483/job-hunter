@@ -1368,7 +1368,7 @@ def main():
         today = dt.date.today()
         rows = read_tracker()
         today_count = sum(1 for r in rows if r.get("date", "")[:10] == today.isoformat())
-        profile = load_profile()
+        profile = None if dry else load_profile()  # searching needs no CV; only drafting does
 
         jobs = collect(rows, now, today, notes)
         stats["fetched"] = len(jobs)

@@ -274,15 +274,30 @@ def test_gmail(address, password, host="imap.gmail.com"):
 
 
 def test_gemini(key):
-    """None if Gemini accepts the key, else what went wrong."""
-    req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
-                                 headers={"x-goog-api-key": key})
+    """None if Gemini accepts the key, else what went wrong.
+
+    Asks for a one-word answer: Google can block a key's project from generating text while it can still
+    list models, so listing alone would pass keys that fail on the first real run."""
+    body = json.dumps({"contents": [{"parts": [{"text": "Reply with OK."}]}],
+                       "generationConfig": {"maxOutputTokens": 5}}).encode()
+    req = urllib.request.Request(f"{bot.GEMINI_API}/gemini-flash-lite-latest:generateContent", data=body,
+                                 headers={"x-goog-api-key": key, "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=20):
+        with urllib.request.urlopen(req, timeout=30):
             return None
     except urllib.error.HTTPError as e:
+        if e.code in (404, 429):  # the key works; this one model is missing or out of free quota today
+            return None
+        try:
+            message = json.loads(e.read().decode()).get("error", {}).get("message", "")
+        except (ValueError, OSError):
+            message = ""
+        if "denied access" in message:
+            return ("Google has blocked the project this key belongs to (\"Your project has been denied access\"). "
+                    "In Google AI Studio press Create API key > Create project to make a key in a new project. "
+                    "If that is refused too, use a different Google account.")
         if e.code in (400, 401, 403):
-            return "Google did not accept this Gemini key. Copy it again from Google AI Studio."
+            return f"Google did not accept this Gemini key ({message[:120] or e.code}). Copy it again from Google AI Studio."
         return f"Gemini answered with error {e.code}. Try again in a minute."
     except OSError as e:
         return f"Could not reach Gemini ({e.__class__.__name__}). Check your internet connection."
@@ -1326,7 +1341,7 @@ class App(tk.Tk):
         vars_ = {}
         for i, (key, label, _) in enumerate(SETTINGS):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", pady=4)
-            v = tk.StringVar(value=str(cfg.get(key, "")))
+            v = tk.StringVar(value=str(cfg.get(key, bot.DEFAULT_CONFIG.get(key, ""))))
             ttk.Entry(frm, textvariable=v, width=26).grid(row=i, column=1, padx=(12, 0), pady=4)
             vars_[key] = v
 

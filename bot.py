@@ -36,11 +36,13 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import urllib.robotparser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Your files (config, profile, CVs, tracker) live next to the scripts. The installed JobHunter.exe sits in a
 # read-only program folder, so it keeps them in %APPDATA%\Job Hunter instead.
@@ -285,16 +287,18 @@ def log(msg):
 
 
 _last_hit = {}
+_hit_lock = threading.Lock()  # company sites are checked from several threads (see find_emails)
 
 
 def fetch(url, as_json=False, timeout=30, tries=3):
     """GET with a pause between requests to the same site and backoff on 429/5xx."""
     host = urllib.parse.urlparse(url).netloc
     for attempt in range(tries):
-        wait = _last_hit.get(host, 0) + MIN_GAP - time.time()
-        if wait > 0:
-            time.sleep(wait)
-        _last_hit[host] = time.time()
+        with _hit_lock:  # book the next free slot for this site, then wait for it outside the lock
+            slot = max(time.time(), _last_hit.get(host, 0) + MIN_GAP)
+            _last_hit[host] = slot
+        if slot > time.time():
+            time.sleep(slot - time.time())
         try:
             # Job APIs can be several MB (Arbeitnow is ~4 MB); web pages are cut at 3 MB.
             limit = 20_000_000 if as_json else 3_000_000
@@ -581,23 +585,36 @@ def company_sites(job):
     return hosts[:2]
 
 
+_site_email = {}  # site -> (email, page) or (None, None): each company site is read once per run
+
+
+def site_email(site):
+    base = "https://" + site
+    for path in ("/careers", "/jobs", "/join-us", "/contact", "/"):
+        try:
+            if not allowed(base + path):
+                continue
+            page = fetch(base + path, timeout=10, tries=1)
+        except urllib.error.HTTPError:
+            continue  # this page is missing; the site is up, so try the next one
+        except Exception:
+            break  # site down, slow or refusing connections: skip its other pages
+        for e in find_emails_in_text(page):
+            local, _, domain = e.lower().partition("@")
+            same_site = site == domain or site.endswith("." + domain) or domain.endswith("." + site)
+            if HIRING_LOCAL.match(local) and same_site:
+                return e, base + path
+    return None, None
+
+
 def careers_page_email(job):
     """Look for a published hiring address on the company's own site."""
     for host in company_sites(job):
-        base = "https://" + host.removeprefix("www.")
         site = host.removeprefix("www.")
-        for path in ("/careers", "/jobs", "/join-us", "/contact", "/"):
-            try:
-                if not allowed(base + path):
-                    continue
-                page = fetch(base + path, timeout=15, tries=1)
-            except Exception:
-                continue
-            for e in find_emails_in_text(page):
-                local, _, domain = e.lower().partition("@")
-                same_site = site == domain or site.endswith("." + domain) or domain.endswith("." + site)
-                if HIRING_LOCAL.match(local) and same_site:
-                    return e, base + path
+        if site not in _site_email:
+            _site_email[site] = site_email(site)
+        if _site_email[site][0]:
+            return _site_email[site]
     return None, None
 
 
@@ -1076,7 +1093,7 @@ def collect(rows, now, today, notes):
         except Exception as e:
             notes.append(f"{src.__name__} failed ({e.__class__.__name__})")
             log(f"{src.__name__}: ERROR {e}")
-    out, seen = [], set()
+    out, seen, matches = [], set(), []
     for j in jobs:
         # The same post often shows up on several boards.
         key = (slug(j["company"]), slug(j["title"]))
@@ -1090,16 +1107,38 @@ def collect(rows, now, today, notes):
         elif already_done(rows, j, None, today):
             j["status"], j["why"] = STATUS_DONE, "already handled"
         else:
-            mail, mail_src = pick_email(j)
-            j["email"], j["email_src"] = mail or "", mail_src or ""
-            if mail and already_done(rows, j, mail, today):
-                j["status"], j["why"] = STATUS_DONE, "already handled"
-            elif mail:
-                j["status"], j["why"] = STATUS_READY, ""
-            else:
-                j["status"], j["why"] = STATUS_SITE, "no published email"
+            matches.append(j)
         out.append(j)
+    find_emails(matches)
+    for j in matches:
+        if j["email"] and already_done(rows, j, j["email"], today):
+            j["status"], j["why"] = STATUS_DONE, "already handled"
+        elif j["email"]:
+            j["status"], j["why"] = STATUS_READY, ""
+        else:
+            j["status"], j["why"] = STATUS_SITE, "no published email"
     return out
+
+
+def find_emails(matches):
+    """Fill in each match's application email. Posts without one need a visit to the company's site, which
+    can take seconds per site, so 8 sites are read at a time (fetch still spaces requests to any one site)."""
+    if not matches:
+        return
+    log(f"{len(matches)} jobs match. Looking for their application emails"
+        + (" (posts without one: checking the company's own site)" if len(matches) > 5 else "") + " ...")
+    done = 0
+
+    def one(j):
+        mail, src = pick_email(j)
+        j["email"], j["email_src"] = mail or "", src or ""
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for f in as_completed([pool.submit(one, j) for j in matches]):
+            f.result()
+            done += 1
+            if done % 10 == 0 and done < len(matches):
+                log(f"  emails checked for {done} of {len(matches)} jobs")
 
 
 def write_jobs(d):

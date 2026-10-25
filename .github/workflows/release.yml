@@ -1,0 +1,47 @@
+# Push a version tag to publish a release with the Windows installer:
+#   git tag v1.0.0 && git push origin v1.0.0
+# The website's download button points to releases/latest/download/JobHunterSetup.exe.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "0.0.0" }
+          ./installer/build.ps1 -Version $version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JobHunterSetup
+          path: build/installer/JobHunterSetup.exe
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/installer/JobHunterSetup.exe
+          generate_release_notes: true

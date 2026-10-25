@@ -17,6 +17,10 @@
     "Entity Framework"
   ],
   "exclude_keywords": [],
+  "keywords_in_title": false,
+  "job_fields": [
+    "software"
+  ],
   "max_job_age_days": 14,
   "max_years_required": 8,
   "worldwide_only": true,

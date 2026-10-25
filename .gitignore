@@ -33,3 +33,6 @@ credentials*.json
 token*.json
 client_secret*.json
 *.log
+
+# Installer build output (installer/build.ps1)
+build/

@@ -40,7 +40,12 @@ import urllib.parse
 import urllib.request
 import urllib.robotparser
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# Your files (config, profile, CVs, tracker) live next to the scripts. The installed JobHunter.exe sits in a
+# read-only program folder, so it keeps them in %APPDATA%\Job Hunter instead.
+FROZEN = getattr(sys, "frozen", False)
+HERE = (os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Job Hunter") if FROZEN
+        else os.path.dirname(os.path.abspath(__file__)))
+os.makedirs(HERE, exist_ok=True)
 UA = {"User-Agent": "Mozilla/5.0 (compatible; JobHunter/1.0; +https://github.com/Ahsan483/job-hunter)"}
 MIN_GAP = 1.5  # seconds between two requests to the same site
 REMOTIVE_CACHE = os.path.join(HERE, "remotive_cache.json")
@@ -63,6 +68,11 @@ DEFAULT_CONFIG = {
     # Job filter, editable in the GUI (Settings). A job is kept if ANY keyword appears in its title or text.
     "keywords": [".NET", "C#", "ASP.NET", "dotnet", "Blazor", "Entity Framework"],
     "exclude_keywords": [],
+    # True: a keyword must be in the job TITLE. Use it for words like "Sales" or "Finance" that appear in almost
+    # every job description.
+    "keywords_in_title": False,
+    # Job categories to read on We Work Remotely (see WWR_FEEDS), e.g. ["sales & marketing"], or ["all"].
+    "job_fields": ["software"],
     "max_job_age_days": MAX_AGE_DAYS,
     # Skip jobs asking for this many years of experience or more (0 = never skip).
     "max_years_required": 8,
@@ -92,18 +102,34 @@ def clean_words(v):
     return [w.strip() for w in v or [] if w.strip()]
 
 
-TECH = word_re(DEFAULT_CONFIG["keywords"])
+MATCH = word_re(DEFAULT_CONFIG["keywords"])
+TITLE_ONLY = False
 EXCLUDE = None
 SEARCH = DEFAULT_CONFIG["keywords"][:6]  # terms sent to the sites that have a search
 WORLDWIDE_ONLY = True
 REGION = None  # regex of my_region_words
 MAX_YEARS = 8
+# We Work Remotely has one feed per job category.
+WWR_FEEDS = {
+    "software": ("remote-full-stack-programming-jobs", "remote-back-end-programming-jobs", "remote-programming-jobs"),
+    "devops": ("remote-devops-sysadmin-jobs",),
+    "design": ("remote-design-jobs",),
+    "sales & marketing": ("remote-sales-and-marketing-jobs",),
+    "customer support": ("remote-customer-support-jobs",),
+    "finance & management": ("remote-management-and-finance-jobs",),
+    "product": ("remote-product-jobs",),
+    "other": ("all-other-remote-jobs",),
+}
+FIELDS = DEFAULT_CONFIG["job_fields"]
 
 
 def apply_filters(cfg):
-    global TECH, EXCLUDE, SEARCH, MAX_AGE_DAYS, WORLDWIDE_ONLY, REGION, MAX_YEARS
+    global MATCH, TITLE_ONLY, EXCLUDE, SEARCH, MAX_AGE_DAYS, WORLDWIDE_ONLY, REGION, MAX_YEARS, FIELDS
     kws = clean_words(cfg.get("keywords")) or DEFAULT_CONFIG["keywords"]
-    TECH, SEARCH = word_re(kws), kws[:6]
+    MATCH, SEARCH = word_re(kws), kws[:6]
+    TITLE_ONLY = bool(cfg.get("keywords_in_title"))
+    FIELDS = [f.lower() for f in clean_words(cfg.get("job_fields"))
+              if f.lower() in WWR_FEEDS or f.lower() == "all"] or DEFAULT_CONFIG["job_fields"]
     EXCLUDE = word_re(clean_words(cfg.get("exclude_keywords")))
     MAX_AGE_DAYS = int(cfg.get("max_job_age_days") or MAX_AGE_DAYS)
     WORLDWIDE_ONLY = bool(cfg.get("worldwide_only", cfg.get("pakistan_only", True)))
@@ -133,7 +159,9 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 OBFUSCATED = re.compile(r"\b([A-Za-z0-9._%+-]+)\s*(?:[\[\(\{]\s*at\s*[\]\)\}]|\s+at\s+)\s*([A-Za-z0-9-]+)\s*(?:[\[\(\{]\s*dot\s*[\]\)\}]|\s+dot\s+)\s*([A-Za-z]{2,})\b", re.I)
 ONSITE = re.compile(r"\b(onsite|on-site|in office|in-office|hybrid)\b", re.I)
 HIRING_LOCAL = re.compile(r"^(careers?|jobs?|hr|hiring|talent|recruit(ing|ment)?|apply|people|work|joinus|join)$", re.I)
-BAD_EMAIL = re.compile(r"(noreply|no-reply|donotreply|example\.|sentry|wixpress|\.png|\.jpg|\.gif|\.webp|privacy|abuse|support|billing|sales)", re.I)
+BAD_EMAIL = re.compile(r"(noreply|no-reply|donotreply|example\.|sentry|wixpress|\.png|\.jpg|\.gif|\.webp)", re.I)
+# Addresses that reach a department, not hiring. Matched on the part before @ only, so jobs@salesloft.com is fine.
+ROLE_EMAIL = re.compile(r"^(privacy|abuse|support|billing|sales)$", re.I)
 ATS_HOSTS = ("greenhouse.io", "lever.co", "workable.com", "ashbyhq.com", "bamboohr.com", "smartrecruiters.com",
              "recruitee.com", "breezy.hr", "jobvite.com", "myworkdayjobs.com", "teamtailor.com", "personio",
              "remotive.com", "remoteok.com", "arbeitnow.com", "himalayas.app", "linkedin.com", "indeed.",
@@ -159,8 +187,13 @@ def fetch(url, as_json=False, timeout=30, tries=3):
             time.sleep(wait)
         _last_hit[host] = time.time()
         try:
+            # Job APIs can be several MB (Arbeitnow is ~4 MB); web pages are cut at 3 MB.
+            limit = 20_000_000 if as_json else 3_000_000
             with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout) as r:
-                raw = r.read(3_000_000).decode("utf-8", errors="replace")
+                data = r.read(limit + 1)
+            if as_json and len(data) > limit:
+                raise ValueError(f"response from {host} is over {limit // 1_000_000} MB")
+            raw = data[:limit].decode("utf-8", errors="replace")
             return json.loads(raw) if as_json else raw
         except urllib.error.HTTPError as e:
             if e.code != 429 and e.code < 500 or attempt == tries - 1:
@@ -235,7 +268,7 @@ def money(lo, hi, cur="USD", period=""):
 
 
 def src_remotive():
-    """One request for every software job, cached for 6 hours; the keyword filter runs on our side."""
+    """One request for Remotive's public feed (every category), cached for 6 hours; the keyword filter runs on our side."""
     try:
         with open(REMOTIVE_CACHE, encoding="utf-8") as f:
             cached = json.load(f)
@@ -244,7 +277,7 @@ def src_remotive():
     if time.time() - cached.get("at", 0) < REMOTIVE_TTL:
         jobs = cached.get("jobs", [])
     else:
-        jobs = fetch("https://remotive.com/api/remote-jobs?category=software-dev", as_json=True).get("jobs", [])
+        jobs = fetch("https://remotive.com/api/remote-jobs", as_json=True).get("jobs", [])
         with open(REMOTIVE_CACHE + ".tmp", "w", encoding="utf-8") as f:
             json.dump({"at": time.time(), "jobs": jobs}, f)
         os.replace(REMOTIVE_CACHE + ".tmp", REMOTIVE_CACHE)
@@ -312,7 +345,8 @@ def src_jobicy():
         tag = term.lower().replace("c#", "c-sharp").replace(" ", "-")
         try:
             d = fetch(f"https://jobicy.com/api/v2/remote-jobs?count=50&tag={q(tag)}", as_json=True)
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as e:
+            log(f"  jobicy tag '{tag}': HTTP {e.code}, skipped")
             continue
         for j in d.get("jobs", []):
             out.append(dict(source="jobicy", id=f"jobicy-{j['id']}", title=html.unescape(j["jobTitle"]),
@@ -328,7 +362,8 @@ def src_jobicy():
 
 def src_weworkremotely():
     out = []
-    for cat in ("remote-full-stack-programming-jobs", "remote-back-end-programming-jobs", "remote-programming-jobs"):
+    feeds = dict.fromkeys(c for f in (WWR_FEEDS if "all" in FIELDS else FIELDS) for c in WWR_FEEDS[f])
+    for cat in feeds:
         feed = fetch(f"https://weworkremotely.com/categories/{cat}.rss")
         for item in re.findall(r"(?s)<item>(.*?)</item>", feed):
             tag = lambda t: html.unescape((re.search(rf"(?s)<{t}>(.*?)</{t}>", item) or [None, ""])[1]).strip()
@@ -396,7 +431,7 @@ def open_to_me(job):
 
 def prefilter(job, now):
     blob = f"{job['title']}\n{job['location']}\n{job['text']}"
-    if not TECH.search(job["title"] + " " + job["text"][:4000]):
+    if not MATCH.search(job["title"] if TITLE_ONLY else job["title"] + " " + job["text"][:4000]):
         return "no keyword match"
     if EXCLUDE and EXCLUDE.search(job["title"]):
         return "excluded word in title"
@@ -424,7 +459,7 @@ def find_emails_in_text(t):
     found = set(EMAIL_RE.findall(t))
     for a, b, c in OBFUSCATED.findall(t):
         found.add(f"{a}@{b}.{c}")
-    return [e.strip(".").lower() for e in found if not BAD_EMAIL.search(e)]
+    return [e.strip(".").lower() for e in found if not BAD_EMAIL.search(e) and not ROLE_EMAIL.match(e.split("@")[0])]
 
 
 def company_sites(job):
@@ -516,18 +551,18 @@ Decide and write. Return ONLY JSON with exactly these keys:
  "reason": "one short sentence",
  "fit_score": 0-100,       // how well the profile matches the job's real requirements; be strict about missing core skills
  "tailor": {{
-   "title": "headline for THIS role built only from titles and skills in PROFILE, e.g. 'Backend Software Engineer | C# | Docker | Azure'; say 'Senior' or 'Lead' only if a PROFILE title does",
+   "title": "headline for THIS role built only from titles and skills in PROFILE, e.g. 'Backend Software Engineer | C# | Docker | Azure' or 'Accountant | IFRS | Xero | Payroll'; say 'Senior' or 'Lead' only if a PROFILE title does",
    "summary": "3-4 sentences written for THIS job. Do NOT copy default_summary. Open with the PROFILE experience closest to what the job asks for, use the job's own wording where PROFILE supports it, and leave out PROFILE skills the job does not care about",
    "skills_first": ["job keywords that exist in PROFILE skills, most important first"],
    "bullets": {{"<experience id>": [bullet indexes, most relevant to this job first; leave out unrelated ones but keep at least 2 per role]}},
-   "rewrites": {{"<experience id>": {{"<bullet index>": "that bullet reworded so its relevance to this job is obvious. Same facts and same numbers; every tool, language and number must already be in PROFILE"}}}},
+   "rewrites": {{"<experience id>": {{"<bullet index>": "that bullet reworded so its relevance to this job is obvious. Same facts and same numbers; every tool, skill, certification, language and number must already be in PROFILE"}}}},
    "projects": ["1-3 project ids most relevant to this job"]
  }},
  "subject": "Application: <role> – {name}",
  "body": "plain-text email, 120-200 words",
  "cover_letter": "one-page cover letter, 250-350 words, 4-5 paragraphs separated by a blank line"
 }}
-Rewrites: reword the 2-3 bullets per role that matter most for this job. Never add a technology, language, tool, number or responsibility that is not in PROFILE: if the job asks for C++ and PROFILE has C#, write about C#, never C++.
+Rewrites: reword the 2-3 bullets per role that matter most for this job. Never add a technology, tool, software, certification, language, number, client or responsibility that is not in PROFILE: if the job asks for C++ and PROFILE has C#, write about C#, never C++; if it asks for SAP and PROFILE has QuickBooks, write about QuickBooks.
 Email rules: greeting to the company team (or the person if the post names who to email); say which role and where it was seen; 2-3 short sentences matching their requirements to real facts and numbers from PROFILE, only the relevant ones; "I'm based in {location_short}, available for remote work and able to overlap with your team's hours."; links: {links}; "My CV is attached."; ask for a short call; sign off with {sign_off}.
 Cover letter rules: start "Dear <team or the person named in the post>,"; paragraph 1: the role, where it was seen, one specific reason this company or product fits; paragraphs 2-3: take the job's 3-4 main requirements and answer each with a concrete PROFILE fact (project, result, number); only paragraph 1 may describe the company's product; from paragraph 2 on, describe only work PROFILE says {name} did, in PROFILE's own terms, without adding the job's wording to it; if the job needs something PROFILE does not have, say plainly and briefly which PROFILE experience is closest and how it transfers, never claim it; no inflated words like "extensive", "deep", "massive", "expert"; last paragraph: remote from {location_short}, overlap with their hours, ask for a call; end "Sincerely,\\n{name}". No address block, no date, no links, no markdown.
 Never claim more than {years} years. No cliches like "passionate" or "hardworking"."""
@@ -749,8 +784,9 @@ def run_cv_py(data, json_path, pdf, *flags):
         json.dump(data, f, indent=1, ensure_ascii=False)
     if os.path.exists(pdf):
         os.remove(pdf)
-    r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "cv.py"), *flags, json_path, pdf],
-                       capture_output=True, text=True, timeout=180)
+    cmd = [sys.executable, "--cv"] if FROZEN else [sys.executable, "-I", os.path.join(HERE, "cv.py")]
+    r = subprocess.run([*cmd, *flags, json_path, pdf], capture_output=True, text=True, timeout=180,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if not os.path.exists(pdf):
         raise RuntimeError("cv.py failed: " + (r.stderr or r.stdout)[-300:])
     return pdf
@@ -818,7 +854,8 @@ def load_config():
 def check_config(cfg):
     keys = (cfg["gmail_address"], cfg["gmail_app_password"], cfg["gemini_api_key"])
     if not all(k and not k.startswith("PUT-") for k in keys):
-        raise RuntimeError("config.json is missing gmail_address, gmail_app_password or gemini_api_key")
+        raise RuntimeError("Gmail or Gemini is not connected yet: press Settings, then Gmail & Gemini keys "
+                           "(or fill in gmail_address, gmail_app_password and gemini_api_key in config.json)")
 
 
 def take_lock():
@@ -1027,8 +1064,8 @@ Return ONLY JSON with exactly these keys:
  "experience": [{"id": "short unique lowercase id from the company name", "company": "", "place": "city or Remote",
                  "title": "", "dates": "", "note": "extra line such as Part-time or Self-employed, or \\"\\"",
                  "bullets": ["every bullet, word for word"]}],
- "projects": [{"id": "short unique lowercase id", "name": "", "text": "description and tech, word for word"}],
- "skills": {"category as in the CV": ["skill", "..."]},
+ "projects": [{"id": "short unique lowercase id", "name": "", "text": "description (projects, portfolio pieces, campaigns, case studies), word for word"}],
+ "skills": {"category as in the CV (certifications, languages and software go here too)": ["skill", "..."]},
  "education": "degree — school, city (several entries joined with ' | ')"
 }
 Keep experience and projects in the CV's order. Use "" for anything the CV does not have."""

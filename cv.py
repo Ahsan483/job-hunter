@@ -25,7 +25,9 @@ import subprocess
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+FROZEN = getattr(sys, "frozen", False)  # the installed JobHunter.exe keeps your files in %APPDATA%\Job Hunter
+HERE = (os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Job Hunter") if FROZEN
+        else os.path.dirname(os.path.abspath(__file__)))
 EDGE_PATHS = [os.path.join(os.environ.get(v, ""), r"Microsoft\Edge\Application\msedge.exe")
               for v in ("ProgramFiles(x86)", "ProgramFiles", "LocalAppData")]
 EDGE = next((p for p in EDGE_PATHS if os.path.exists(p)), None)
@@ -81,18 +83,20 @@ def build(profile, t):
         if e.get("note"):
             out.append(f"<div class='note'>{esc(e['note'])}</div>")
         out.append("<ul>" + "".join(f"<li>{esc(b)}</li>" for b in bullets) + "</ul>")
-    projects = {p["id"]: p for p in profile["projects"]}
+    projects = {p["id"]: p for p in profile.get("projects") or []}
     chosen = [projects[i] for i in t.get("projects", []) if i in projects]
     if chosen:
         out.append("<h2>PROJECTS</h2><ul>" + "".join(
             f"<li><b>{esc(p['name'])}</b>: {esc(p['text'])}</li>" for p in chosen) + "</ul>")
     first = [s.lower() for s in t.get("skills_first", [])]
     rows = []
-    for cat, skills in profile["skills"].items():
+    for cat, skills in (profile.get("skills") or {}).items():
         ranked = sorted(skills, key=lambda s: first.index(s.lower()) if s.lower() in first else len(first))
         rows.append(f"<tr><td class='k'>{esc(cat)}</td><td>{esc(', '.join(ranked))}</td></tr>")
-    out.append("<h2>SKILLS</h2><table>" + "".join(rows) + "</table>")
-    out.append(f"<h2>EDUCATION</h2><div><b>{esc(profile['education'])}</b></div>")
+    if rows:
+        out.append("<h2>SKILLS</h2><table>" + "".join(rows) + "</table>")
+    if profile.get("education"):
+        out.append(f"<h2>EDUCATION</h2><div><b>{esc(profile['education'])}</b></div>")
     return page("".join(out))
 
 

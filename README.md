@@ -1,6 +1,6 @@
 # Job Hunter
 
-**Find remote jobs, get a tailored ATS-friendly CV + cover letter for each one, and have the application email waiting in your Gmail drafts.** Free Gemini AI, a simple Windows window, and nothing to `pip install`.
+**Find remote jobs in any field (software, finance, sales, SEO, support, design, writing, HR and more), get a tailored ATS-friendly CV + cover letter for each one, and have the application email waiting in your Gmail drafts.** Free Gemini AI, a simple Windows window, and nothing to `pip install`.
 
 The bot never sends anything. You read each draft and press Send yourself.
 
@@ -14,6 +14,7 @@ The bot never sends anything. You read each draft and press Send yourself.
 ## Features
 
 - **Searches 8 job sources at once:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the Hacker News "Who is hiring?" thread.
+- **Any kind of remote job:** pick a job type (Finance / Accounting, Sales, SEO / Marketing, Customer support, Design, Writing, Data, HR, Virtual assistant, Project management, Software) or type your own keywords.
 - **Smart filter:** your keywords, max post age, max years of experience, and "only open worldwide / to my region".
 - **Finds the application email** in the post, or on the company's own careers page.
 - **Tailored CV + cover letter (PDF)** for each job, built only from facts in your profile. The bot drops any line that adds a skill or number you don't have.
@@ -23,7 +24,18 @@ The bot never sends anything. You read each draft and press Send yourself.
 - **Auto-run every 30 minutes** with Windows Task Scheduler.
 - **Uses only free Gemini models** and switches to another model when one runs out of free quota.
 
-## Requirements
+## Download for Windows (easiest)
+
+1. Download **[JobHunterSetup.exe](https://github.com/Ahsan483/job-hunter/releases/latest/download/JobHunterSetup.exe)** (or from [codeprojectsofficial.com/tools/job-hunter](https://www.codeprojectsofficial.com/tools/job-hunter)).
+2. Run it. If Windows shows **"Windows protected your PC"**, click **More info → Run anyway** (the installer is not code-signed yet).
+3. Job Hunter opens and asks for your **Gemini API key** and, optionally, a **Gmail app password**. Press **How do I get…?** under each box for step-by-step help, then **Test & save**.
+4. Press **Upload my CV**, then **Find jobs**.
+
+No Python needed. Your keys, profile and CVs stay on your computer in `%APPDATA%\Job Hunter`. Uninstalling keeps them.
+
+To run from source instead, follow the steps below.
+
+## Requirements (running from source)
 
 - Windows 10 or 11
 - [Python 3.10+](https://www.python.org/downloads/). Tick **"Add python.exe to PATH"** when installing.
@@ -53,7 +65,7 @@ Skip this if you only want CVs and cover letters.
 3. Check that IMAP is on: Gmail → Settings → See all settings → Forwarding and POP/IMAP. It is on by default for most accounts.
 
 ### 4. Create `config.json`
-Copy `config.example.json` to `config.json` and fill in:
+The window asks for your keys the first time it opens and writes `config.json` for you. To do it by hand, copy `config.example.json` to `config.json` and fill in:
 
 | Key | What to put |
 |---|---|
@@ -78,6 +90,8 @@ python -I gui.py
 Press **Find jobs** for a first test. It takes 1-3 minutes and uses no Gemini and no Gmail.
 
 ## Using the window
+
+The window is a set of frosted-glass cards over a slowly moving gradient. The gradient pauses while the window is minimised or another app has focus. Drag the gaps between the cards to resize the job list, the details and the console.
 
 **Top bar**
 - **Find jobs**: searches every job site and lists the matches.
@@ -105,24 +119,31 @@ Set these in the **Job filter** bar (then press **Save & search**) or in `config
 
 | Setting | Meaning | Example |
 |---|---|---|
-| Keywords (`keywords`) | A job is kept if **any** of these appears in it | `React, Node.js, TypeScript` |
+| Job type | Fills in keywords that suit a field and picks the matching We Work Remotely categories. Pick **Custom** to type your own (then every category is read) | `Finance / Accounting` |
+| Keywords (`keywords`) | A job is kept if **any** of these appears in it | `React, Node.js` or `Accountant, Bookkeeper` |
+| Keywords in title only (`keywords_in_title`) | The keyword must be in the job title, not just the description. Turn it on for words like *Sales* or *Finance* that appear in almost every job ad | on |
 | Exclude in title (`exclude_keywords`) | Skip jobs with these words in the title | `Intern, PHP` |
 | Max age (`max_job_age_days`) | Ignore older posts | `14` |
 | Only open worldwide / to my region (`worldwide_only`) | On: only jobs that hire worldwide or in your region. Off: any remote job | on |
 | `my_region_words` (config.json) | Your country/region. Posts naming these count as open to you | `["Pakistan", "South Asia"]` |
 | `max_years_required` (config.json) | Skip jobs asking for this many years or more (`0` = off) | `8` |
+| `job_fields` (config.json) | We Work Remotely categories to read: `software`, `devops`, `design`, `sales & marketing`, `customer support`, `finance & management`, `product`, `other`, or `all`. Set by **Job type** | `["sales & marketing"]` |
 
-The defaults look for .NET / C# jobs. Change the keywords to your own stack.
+The defaults look for .NET / C# jobs. Pick a **Job type** or type your own keywords for any other field. Your CV can be from any field too: **Upload my CV** keeps certifications, languages and software as skills, and the tailoring never adds a tool, certification or number your CV doesn't have.
 
 **Settings** also has: `min_fit_score` (0-100 score Gemini gives a job before a draft is made, default 60), `max_drafts_per_run` (3), `max_drafts_per_day` (20) and `max_gemini_calls_per_run` (8, keeps you inside the free limits).
 
 ## Auto-run every 30 minutes
 
-Create the scheduled task once in PowerShell (change the path to your folder):
+Press **Set up auto-run** in the window once. It creates a Windows scheduled task named "Remote Job Hunter" that runs every 30 minutes while you are signed in. After that, the same button turns it on and off. Each run searches, tailors up to `max_drafts_per_run` CVs, and saves the drafts. Nothing is ever sent.
+
+## Building the installer
+
+`installer\build.ps1` builds `build\installer\JobHunterSetup.exe` with PyInstaller and [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 ```
-schtasks /Create /TN "Remote Job Hunter" /SC MINUTE /MO 30 /TR "pythonw -I \"C:\path\to\job-hunter\bot.py\""
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 1.0.0
 ```
-After that, the **Auto-run** button in the window turns it on and off. Each run searches, tailors up to `max_drafts_per_run` CVs, and saves the drafts. Nothing is ever sent.
+Pushing a tag such as `v1.0.0` does the same on GitHub Actions and publishes the installer as a release (`.github/workflows/release.yml`).
 
 ## Command line
 
@@ -144,7 +165,7 @@ python -I bot.py --import-cv cv.pdf # rebuild profile.json from your CV
 | Gmail login fails | Use the 16-letter **app password**, not your normal password, and check that IMAP is on. |
 | "every free model is out of quota" | Gemini's free limit is used up. The log says when it's back, usually within a day. |
 | "model was not found" in `runs.log` | Set `gemini_model` to a current name from https://ai.google.dev/gemini-api/docs/models. |
-| No jobs found | Add more keywords, raise the max age, or turn off "Only open worldwide / to my region". |
+| No jobs found | Add more keywords, raise the max age, or turn off "Only open worldwide / to my region". For non-software jobs, pick a **Job type** so the right job categories are searched. |
 
 ## Files
 

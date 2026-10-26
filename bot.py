@@ -695,6 +695,7 @@ Never claim more than {years} years. No cliches like "passionate" or "hardworkin
 
 
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_TIMEOUT = 120  # seconds to wait for one model's answer before trying the next model
 GEMINI_STATE = os.path.join(HERE, "gemini_state.json")  # model list + which models are out of free quota
 NOT_TEXT_MODEL = re.compile(r"(tts|image|banana|live|audio|transcribe|robotics|computer-use|embedding|antigravity"
                             r"|deep-research|lyria|omni|customtools|argon|aqa)", re.I)
@@ -800,6 +801,8 @@ def gemini(cfg, prompt, attach=None):
     blocked, why = state.setdefault("blocked", {}), state.setdefault("why", {})
     usage = state.setdefault("usage", {})
     models = gemini_models(cfg, state)
+    if attach:  # Gemma cannot read files (a PDF CV gets error 500), so only Gemini models are asked
+        models = [m for m in models if not m.startswith("gemma")] or models
     last, tried, back_at = "no response", 0, []
     for model in models:
         if blocked.get(model, 0) > time.time():
@@ -808,6 +811,8 @@ def gemini(cfg, prompt, attach=None):
         if tried == 8:
             break
         tried += 1
+        if tried > 1:  # say why we moved on, so a slow fallback does not look like a hang
+            log(f"  {last}. Trying {model} ...")
         gen = {"temperature": 0.4}
         if not model.startswith("gemma"):  # Gemma has no JSON mode; the prompt still asks for JSON
             gen["responseMimeType"] = "application/json"
@@ -816,7 +821,7 @@ def gemini(cfg, prompt, attach=None):
                                      headers={"Content-Type": "application/json", "x-goog-api-key": cfg["gemini_api_key"]})
         for attempt in range(3):
             try:
-                with urllib.request.urlopen(req, timeout=180) as r:
+                with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as r:
                     res = answer_json(json.loads(r.read().decode()))
                 if model != models[0]:
                     log(f"  (answered by Gemini model {model})")
@@ -860,6 +865,10 @@ def gemini(cfg, prompt, attach=None):
                                        f"project), then paste it in Settings > Gmail & Gemini keys.")
                 break  # anything else (bad request, overloaded, not found): next model
             except (TimeoutError, urllib.error.URLError, OSError) as e:
+                if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                    # a model that went quiet usually stays quiet: try the next one instead of waiting again
+                    last = f"{model} did not answer within {GEMINI_TIMEOUT} s"
+                    break
                 last = f"Gemini timeout/network error ({model}): {e}"
                 if attempt < 2:
                     time.sleep(10)

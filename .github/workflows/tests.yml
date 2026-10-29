@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile
+        run: python -m py_compile bot.py gui.py cv.py jobhunter.py
+
+      - name: Unit tests
+        run: python -I -m unittest discover -s tests -v

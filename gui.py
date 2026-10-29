@@ -5,6 +5,7 @@ Every button runs bot.py in the background, so the scheduled runs and the window
 the same code, tracker.csv and jobs.json.
 """
 import ast
+import csv
 import datetime as dt
 import imaplib
 import json
@@ -26,18 +27,14 @@ from tkinter import filedialog, messagebox, ttk
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bot  # noqa: E402
 
-# The installed JobHunter.exe sits in a read-only program folder, so it keeps your files in %APPDATA%\Job Hunter.
-FROZEN = getattr(sys, "frozen", False)
-HERE = (os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Job Hunter") if FROZEN
-        else os.path.dirname(os.path.abspath(__file__)))
-os.makedirs(HERE, exist_ok=True)
+# Your files live in bot.HERE: next to the scripts, or %APPDATA%\Job Hunter for the installed JobHunter.exe.
+FROZEN, HERE = bot.FROZEN, bot.HERE
 ICON = (os.path.join(sys._MEIPASS, "icon.ico") if FROZEN
         else os.path.join(os.path.dirname(os.path.abspath(__file__)), "installer", "icon.ico"))
-JOBS_FILE = os.path.join(HERE, "jobs.json")
+JOBS_FILE, TRACKER, LOCK = bot.JOBS_FILE, bot.TRACKER, bot.LOCK
 CONFIG = os.path.join(HERE, "config.json")
-TRACKER = os.path.join(HERE, "tracker.csv")
 PROFILE = os.path.join(HERE, "profile.json")
-LOCK = os.path.join(HERE, "bot.lock")
+RELEASES = f"https://github.com/{bot.REPO}/releases/latest"
 AUTO_MODEL = "Auto: best free model that is not at its limit"
 TASK = "Remote Job Hunter"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -47,26 +44,30 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 PY = os.path.join(os.path.dirname(sys.executable), "python.exe")
 if not os.path.exists(PY):
     PY = sys.executable
-BOT = [sys.executable, "--bot"] if FROZEN else [PY, "-I", "-X", "utf8", "-u", os.path.join(HERE, "bot.py")]
+BOT = [sys.executable, "--bot"] if FROZEN else [PY, "-I", "-X", "utf8", "-u", os.path.join(bot.CODE, "bot.py")]
 # What the 30-minute scheduled task runs: no console window either way.
 PYW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
 TASK_RUN = (f'"{sys.executable}" --bot' if FROZEN
-            else f'"{PYW if os.path.exists(PYW) else sys.executable}" -I "{os.path.join(HERE, "bot.py")}"')
+            else f'"{PYW if os.path.exists(PYW) else sys.executable}" -I "{os.path.join(bot.CODE, "bot.py")}"')
 
 VIEWS = {
     "Ready to draft (has email)": {"ready"},
     "Apply on company site": {"apply on site"},
     "All matches": {"ready", "apply on site"},
-    "Done / skipped": {"done"},
+    "Done, applied or skipped": {"done"},
     "Everything (incl. rejected)": {"ready", "apply on site", "done", "rejected"},
 }
 LABEL = {"ready": "✉ Ready", "apply on site": "🌐 Apply on site", "done": "✔ Done", "rejected": "✖ Rejected"}
-DEFAULT_KEYWORDS = [".NET", "C#", "ASP.NET", "dotnet", "Blazor", "Entity Framework"]
-SETTINGS = [("min_fit_score", "Minimum fit score (0-100)", int),
-            ("max_drafts_per_run", "Max drafts per run", int),
-            ("max_drafts_per_day", "Max drafts per day", int),
-            ("max_gemini_calls_per_run", "Max Gemini calls per run", int),
-            ("gemini_model", "Preferred Gemini model", str)]
+DEFAULT_KEYWORDS = bot.DEFAULT_CONFIG["keywords"]
+# (key, label, lowest, highest, what it means). The AI model is picked in the main window.
+SETTINGS = [("min_fit_score", "Minimum fit score", 0, 100,
+             "Auto-draft skips jobs Gemini scores lower than this (0-100). Lower it if too few drafts are made."),
+            ("max_drafts_per_run", "Max drafts per run", 1, 50, "Drafts (or CVs) one Auto-draft run makes at most."),
+            ("max_drafts_per_day", "Max drafts per day", 1, 200, "All runs together, per calendar day."),
+            ("max_gemini_calls_per_run", "Max Gemini calls per run", 1, 50,
+             "Jobs one run asks Gemini about. Keeps you inside the free limits."),
+            ("max_years_required", "Skip jobs asking for (years)", 0, 40,
+             "Hide jobs that ask for this many years of experience or more. 0 = never hide.")]
 
 # Job type -> (keywords, We Work Remotely categories from bot.WWR_FEEDS, keywords must be in the title).
 # Words like "Sales" or "Finance" are in almost every job ad, so most presets match on the title only.
@@ -215,7 +216,81 @@ def read_config():
 
 def has_key(cfg, key):
     v = cfg.get(key)
-    return bool(v) and not v.startswith("PUT-")
+    return isinstance(v, str) and bot.is_set(v.strip())
+
+
+def write_config(cfg):
+    with open(CONFIG + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(CONFIG + ".tmp", CONFIG)
+
+
+def version_tuple(v):
+    return tuple(int(n) for n in re.findall(r"\d+", v)[:3])
+
+
+def latest_release():
+    """Tag of the newest GitHub release, e.g. 'v1.2.0', or None when GitHub cannot be reached."""
+    req = urllib.request.Request(f"https://api.github.com/repos/{bot.REPO}/releases/latest", headers=bot.UA)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode()).get("tag_name")
+    except (OSError, ValueError):
+        return None
+
+
+def job_files(job_id):
+    """(cv, cover letter) PDFs made for one job, newest first in tracker.csv; None where there is none."""
+    try:
+        with open(TRACKER, newline="", encoding="utf-8-sig") as f:
+            rows = [r for r in csv.DictReader(f) if r.get("draft_id") == job_id and r.get("cv_file")]
+    except OSError:
+        return None, None
+    for r in reversed(rows):
+        cv = os.path.join(HERE, "cvs", r["cv_file"])
+        if os.path.exists(cv):
+            letter = os.path.join(HERE, "cvs", bot.letter_of(r["cv_file"]))
+            return cv, letter if os.path.exists(letter) else None
+    return None, None
+
+
+def dpi_aware():
+    """Crisp text on scaled (125%, 150%) screens; without this Windows stretches the window and blurs it."""
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except (AttributeError, OSError):
+        pass
+
+
+class Tooltip:
+    """A small note under a widget while the mouse rests on it."""
+
+    def __init__(self, widget, text):
+        self.widget, self.text, self.win, self.job = widget, text, None, None
+        widget.bind("<Enter>", lambda e: self.schedule(), add="+")
+        widget.bind("<Leave>", lambda e: self.hide(), add="+")
+        widget.bind("<ButtonPress>", lambda e: self.hide(), add="+")
+
+    def schedule(self):
+        self.hide()
+        self.job = self.widget.after(500, self.show)
+
+    def show(self):
+        w = self.widget
+        self.win = tk.Toplevel(w.winfo_toplevel())  # not inside a Card, so the card tint leaves it alone
+        self.win.wm_overrideredirect(True)
+        self.win.wm_geometry(f"+{w.winfo_rootx() + 8}+{w.winfo_rooty() + w.winfo_height() + 4}")
+        tk.Label(self.win, text=self.text, justify="left", wraplength=360, background=INK, foreground="white",
+                 font=("Segoe UI", 9), padx=8, pady=5).pack()
+
+    def hide(self):
+        if self.job:
+            self.widget.after_cancel(self.job)
+            self.job = None
+        if self.win:
+            self.win.destroy()
+            self.win = None
 
 
 # ---------- connecting Gmail and Gemini ----------
@@ -375,14 +450,17 @@ class Card(tk.Frame):
 
 class App(tk.Tk):
     def __init__(self):
+        dpi_aware()
         super().__init__()
-        self.title("Job Hunter")
+        self.title(f"Job Hunter {bot.VERSION}")
         try:
             self.iconbitmap(default=ICON)
         except tk.TclError:
             pass
-        self.geometry("1280x800")
-        self.minsize(900, 600)
+        self.scale = max(1.0, self.winfo_fpixels("1i") / 96)  # 1.5 on a 150% screen: sizes in pixels grow with it
+        px = lambda n: round(n * self.scale)
+        self.geometry(f"{min(px(1280), self.winfo_screenwidth() - 40)}x{min(px(800), self.winfo_screenheight() - 80)}")
+        self.minsize(px(900), px(600))
         self.jobs, self.by_iid, self.mtime = [], {}, 0
         self.proc, self.out, self.stopped = None, queue.Queue(), False
         self.sort_col, self.sort_rev = "Posted", False
@@ -394,7 +472,7 @@ class App(tk.Tk):
         self.bg_size = (0, 0)
         self.build_background(self.winfo_screenwidth(), self.winfo_screenheight())
         # Jobs on top, console below, table left, details right: drag the gaps between cards to resize them.
-        self.split_x, self.split_y, self.drag, self.body = 0.6, 0.55, None, None
+        self.split_x, self.split_y, self.drag, self.body = 0.6, 0.66, None, None
         self.canvas.bind("<Configure>", self.layout)
         self.canvas.bind("<Motion>", self.sash_cursor)
         self.canvas.bind("<ButtonPress-1>", lambda e: setattr(self, "drag", self.sash_at(e.x, e.y)))
@@ -407,9 +485,13 @@ class App(tk.Tk):
         self.build_log()
         self.load_jobs()
         self.refresh_task_button()
+        self.bind_all("<F5>", lambda e: self.find_jobs())
+        self.bind_all("<Control-f>", lambda e: (self.search_entry.focus_set(), self.search_entry.select_range(0, "end")))
+        self.tree.bind("<Return>", lambda e: self.open_job())
         self.after(100, self.pump)
         self.after(3000, self.watch_file)
         self.after(500, self.first_run)
+        self.after(4000, self.check_update)
 
     # ---------- look ----------
 
@@ -443,7 +525,8 @@ class App(tk.Tk):
         self.option_add("*TCombobox*Listbox.background", SURFACE)
         self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
         self.option_add("*TCombobox*Listbox.font", ("Segoe UI", 10))
-        st.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, foreground=INK, rowheight=28,
+        st.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, foreground=INK,
+                     rowheight=round(28 * self.scale),
                      bordercolor=LINE, lightcolor=SURFACE, darkcolor=SURFACE)
         st.map("Treeview", background=[("selected", ACCENT)], foreground=[("selected", "white")])
         st.configure("Treeview.Heading", background=DIALOG, foreground=MUTED, relief="flat", bordercolor=LINE,
@@ -526,31 +609,54 @@ class App(tk.Tk):
         bar = c.row()
         self.busy_buttons = []
         for text, cmd, tip in [
-            ("🔍  Find jobs", self.find_jobs, "Search all job sites now (no Gemini, no Gmail)"),
-            ("✉  Auto-draft best matches", self.auto_draft, "Same as a scheduled run: Gemini + CV + Gmail drafts"),
+            ("🔍  Find jobs", self.find_jobs, "Search every job site with the filter below (F5). "
+                                             "Uses no Gemini and no Gmail. Takes 1-3 minutes."),
+            ("✉  Auto-draft best matches", self.auto_draft,
+             "Find jobs, then let Gemini check the best matches and write a tailored CV + email for each. "
+             "Saved as Gmail drafts (or as files when Gmail is not connected). Nothing is sent."),
         ]:
             b = ttk.Button(bar, text=text, style="Big.TButton", command=cmd)
             b.pack(side="left", padx=(0, 8))
+            Tooltip(b, tip)
             self.busy_buttons.append(b)
         # Not a busy button: it must work while a run is going, including one started by Auto-run.
-        ttk.Button(bar, text="⏹  Stop run", command=self.stop_run).pack(side="left", padx=(0, 8))
+        b = ttk.Button(bar, text="⏹  Stop", command=self.stop_run)
+        b.pack(side="left", padx=(0, 8))
+        Tooltip(b, "Stop the run in progress, from this window or from Auto-run.")
         sep = tk.Frame(bar, width=1, bg=LINE)
         sep.solid = True
         sep.pack(side="left", fill="y", padx=8, pady=4)
-        for text, cmd in [("📧  Gmail drafts", self.open_gmail), ("📂  CVs folder", self.open_cvs),
-                          ("📊  Tracker", self.open_tracker), ("📜  Run log", self.open_runs),
-                          ("⚙  Settings", self.settings)]:
-            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=(0, 6))
+        self.menu_button(bar, "📁  Open", [
+            ("📧  Gmail drafts", self.open_gmail), ("📂  My CVs and cover letters", self.open_cvs),
+            ("📊  Tracker (every job handled)", self.open_tracker), ("📜  Run log", self.open_runs),
+            None, ("🗂  Job Hunter data folder", lambda: os.startfile(HERE))])
+        ttk.Button(bar, text="⚙  Settings", command=self.settings).pack(side="left", padx=(0, 6))
+        self.menu_button(bar, "❔  Help", [
+            ("🚀  Getting started", lambda: (self.tree.selection_set(()), self.show_start())),("📖  User guide", lambda: webbrowser.open(
+                f"https://github.com/{bot.REPO}#readme")),
+            ("🐞  Report a problem", lambda: webbrowser.open(f"https://github.com/{bot.REPO}/issues/new/choose")),
+            None, ("⬆  Check for updates", lambda: self.check_update(quiet=False)),
+            ("ℹ  About Job Hunter", self.about)])
         self.task_btn = ttk.Button(bar, text="Auto-run: …", command=self.toggle_task)
         self.task_btn.pack(side="right")
+        Tooltip(self.task_btn, "Run Auto-draft every 30 minutes in the background while you are signed in to "
+                               "Windows. Press again to turn it on or off.")
+        self.update_btn = ttk.Button(bar, style="Big.TButton", command=lambda: webbrowser.open(RELEASES))
+        Tooltip(self.update_btn, f"You have {bot.VERSION}. Download the new installer and run it: your keys, "
+                                 "profile and CVs are kept.")
 
         row = c.row(pady=(8, 0))
         c.label(row, "Your CV:", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 8))
-        for text, cmd, busy in [("📤  Upload my CV", self.upload_cv, True),
-                                ("👤  My profile", self.open_profile, False),
-                                ("📝  Tailor CV to a job description…", self.paste_job, True)]:
+        for text, cmd, busy, tip in [
+                ("📤  Upload my CV", self.upload_cv, True,
+                 "Gemini reads your CV (PDF, Word, text or a photo) once and builds your profile. Every tailored "
+                 "CV is made only from facts in it."),
+                ("👤  My profile", self.open_profile, False, "Check or correct your profile (profile.json) in Notepad."),
+                ("📝  Tailor CV to a job description…", self.paste_job, True,
+                 "Paste any job post (LinkedIn, a company site, …) and get a tailored CV + cover letter for it.")]:
             b = ttk.Button(row, text=text, command=cmd)
             b.pack(side="left", padx=(0, 6))
+            Tooltip(b, tip)
             if busy:
                 self.busy_buttons.append(b)
         self.profile_lbl = c.label(row, muted=True)
@@ -628,8 +734,7 @@ class App(tk.Tk):
                 state.get(k, {}).pop(model, None)
             bot.save_gemini_state(state)
         cfg["gemini_model"] = model
-        with open(CONFIG, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        write_config(cfg)
         self.write_log(f"\nAI model: {model or 'Auto'}"
                        + (" (other free models take over when it is at its limit)\n" if model else "\n"))
         self.fill_models()
@@ -669,6 +774,7 @@ class App(tk.Tk):
         self.excl = tk.StringVar(value=", ".join(cfg.get("exclude_keywords") or []))
         self.age = tk.StringVar(value=str(cfg.get("max_job_age_days") or 14))
         self.pk_only = tk.BooleanVar(value=cfg.get("worldwide_only", cfg.get("pakistan_only", True)))
+        self.region = tk.StringVar(value=", ".join(bot.clean_words(cfg.get("my_region_words"))))
         self.title_only = tk.BooleanVar(value=bool(cfg.get("keywords_in_title")))
         self.preset = tk.StringVar()
         mine = [k.strip().lower() for k in self.kw.get().split(",")]
@@ -685,19 +791,36 @@ class App(tk.Tk):
             menu.add_checkbutton(label=n, variable=self.types[n], command=self.use_preset)
         mb["menu"] = menu
         mb.pack(side="left", padx=(0, 14))
-        c.check(top, "Keywords in title only", self.title_only).pack(side="left", padx=(0, 12))
-        c.check(top, "Only open worldwide / to my region", self.pk_only).pack(side="left", padx=(0, 12))
-        c.label(top, "Saved for the 30-minute auto-run too", muted=True).pack(side="right")
+        Tooltip(mb, "Pick one or more fields. Each fills in the usual job titles for it. Type your own keywords "
+                    "below for anything else.")
+        w = c.check(top, "Keywords in title only", self.title_only)
+        w.pack(side="left", padx=(0, 12))
+        Tooltip(w, "A keyword must be in the job title. Turn on for broad words like Sales or Finance that "
+                   "appear in almost every job ad.")
+        w = c.check(top, "Only open worldwide / to my region", self.pk_only)
+        w.pack(side="left", padx=(0, 4))
+        Tooltip(w, "On: only jobs that hire worldwide or name your country/region. Off: every remote job, "
+                   "including ones limited to the US or Europe.")
+        c.label(top, "My country/region:").pack(side="left", padx=(8, 4))
+        w = ttk.Entry(top, textvariable=self.region, width=22)
+        w.pack(side="left")
+        Tooltip(w, "Jobs that name one of these count as open to you, e.g.  Pakistan, South Asia, APAC")
 
         row = c.row(pady=(8, 0))
         c.label(row, "Keywords (any of):").pack(side="left")
-        ttk.Entry(row, textvariable=self.kw, width=28).pack(side="left", padx=(4, 12), fill="x", expand=True)
+        w = ttk.Entry(row, textvariable=self.kw, width=28)
+        w.pack(side="left", padx=(4, 12), fill="x", expand=True)
+        Tooltip(w, "Comma separated. A job is kept if any keyword matches, e.g.  React, Node.js  or  "
+                   "Accountant, Bookkeeper. Small typos are fine.")
         c.label(row, "Exclude in title:").pack(side="left")
-        ttk.Entry(row, textvariable=self.excl, width=22).pack(side="left", padx=(4, 12))
+        w = ttk.Entry(row, textvariable=self.excl, width=22)
+        w.pack(side="left", padx=(4, 12))
+        Tooltip(w, "Skip jobs with any of these words in the title, e.g.  Senior, Intern, PHP")
         c.label(row, "Max age (days):").pack(side="left")
         ttk.Spinbox(row, from_=1, to=60, textvariable=self.age, width=4).pack(side="left", padx=(4, 12))
         b = ttk.Button(row, text="🔍  Save & search", style="Big.TButton", command=self.find_jobs)
         b.pack(side="left")
+        Tooltip(b, "Save this filter (Auto-run uses it too) and search now.")
         self.busy_buttons.append(b)
         self.show_preset()
         self.kw.trace_add("write", lambda *a: self.show_preset())
@@ -733,7 +856,9 @@ class App(tk.Tk):
         c.label(row, "Search in list:").pack(side="left")
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *a: self.fill_table())
-        ttk.Entry(row, textvariable=self.search, width=24).pack(side="left", padx=(4, 12))
+        self.search_entry = ttk.Entry(row, textvariable=self.search, width=24)
+        self.search_entry.pack(side="left", padx=(4, 12))
+        Tooltip(self.search_entry, "Show only jobs whose title, company, location or text has this (Ctrl+F).")
         info = c.row(pady=(0, 8))
         self.count_lbl = c.label(info, muted=True)
         self.count_lbl.pack(side="left")
@@ -761,14 +886,27 @@ class App(tk.Tk):
 
         right = self.c_detail = Card(self)
         acts = right.row(pady=(0, 8))
-        self.b_open = ttk.Button(acts, text="🌐  Open job page", command=self.open_job)
-        self.b_draft = ttk.Button(acts, text="✉  Draft email + CV", style="Big.TButton", command=lambda: self.act("draft"))
-        self.b_cv = ttk.Button(acts, text="📄  Make CV + cover letter", command=lambda: self.act("cv"))
-        self.b_copy = ttk.Button(acts, text="📋  Copy email", command=self.copy_email)
-        self.b_skip = ttk.Button(acts, text="🚫  Skip job", command=lambda: self.act("skip"))
-        for i, b in enumerate((self.b_draft, self.b_cv, self.b_open, self.b_copy, self.b_skip)):
-            b.grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
-        for i in range(2):
+        buttons = [
+            ("b_draft", "✉  Draft email + CV", lambda: self.act("draft"),
+             "Gemini writes a tailored CV and an email for this job and saves them as a Gmail draft. Nothing is sent."),
+            ("b_cv", "📄  CV + cover letter", lambda: self.act("cv"),
+             "A tailored CV and cover letter (PDF) to upload on the company's site. Needs no Gmail."),
+            ("b_open", "🌐  Job page", self.open_job, "Open the job post in your browser (Enter)."),
+            ("b_files", "📂  My CV for it", self.open_job_files,
+             "Open the CV and cover letter already made for this job."),
+            ("b_copy", "📋  Email", self.copy_email, "Copy the application email address."),
+            ("b_letter", "📋  Cover letter", self.copy_letter,
+             "Copy the cover letter text, to paste into an application form."),
+            ("b_applied", "✅  Applied", lambda: self.act("applied"),
+             "You applied (on the site or by email): move it to Done and note it in tracker.csv."),
+            ("b_skip", "🚫  Skip", lambda: self.act("skip"), "Hide this job. The bot will not draft it."),
+        ]
+        for i, (name, text, cmd, tip) in enumerate(buttons):
+            b = ttk.Button(acts, text=text, command=cmd, style="Big.TButton" if name == "b_draft" else "TButton")
+            b.grid(row=i // 3, column=i % 3, sticky="ew", padx=2, pady=2)
+            Tooltip(b, tip)
+            setattr(self, name, b)
+        for i in range(3):
             acts.columnconfigure(i, weight=1)
         box = tk.Frame(right)
         box.pack(fill="both", expand=True)
@@ -784,6 +922,10 @@ class App(tk.Tk):
         self.detail.tag_bind("link", "<Button-1>", lambda e: self.open_job())
         self.detail.tag_bind("link", "<Enter>", lambda e: self.detail.config(cursor="hand2"))
         self.detail.tag_bind("link", "<Leave>", lambda e: self.detail.config(cursor=""))
+        self.detail.tag_configure("done", foreground="#15803d", font=("Segoe UI", 10, "bold"))
+        self.detail.tag_configure("todo", foreground=INK, font=("Segoe UI", 10, "bold"))
+        self.detail.tag_configure("muted", foreground=MUTED, lmargin1=26, lmargin2=26, spacing3=8)
+        self.detail.tag_configure("warn", foreground="#b45309")
         self.detail.pack(side="left", fill="both", expand=True)
         dsb.pack(side="left", fill="y")
         self.set_job_buttons(None)
@@ -876,10 +1018,15 @@ class App(tk.Tk):
             self.by_iid[iid] = j
             if j["id"] == keep:
                 again = iid
-        self.count_lbl.config(text=f"{len(rows)} jobs  ·  "
-                              f"{sum(j['status'] == 'ready' for j in self.jobs)} ready, "
-                              f"{sum(j['status'] == 'apply on site' for j in self.jobs)} apply on site, "
-                              f"{len(self.jobs)} checked")
+        matches = sum(j["status"] in (bot.STATUS_READY, bot.STATUS_SITE) for j in self.jobs)
+        if self.jobs and not matches and not rows:
+            text = (f"No matches in {len(self.jobs)} jobs. Try a Job type, fewer or other keywords, a longer max age, "
+                    "or untick 'Only open worldwide'. Show 'Everything' to see why each was left out.")
+        else:
+            text = (f"{len(rows)} shown  ·  {sum(j['status'] == bot.STATUS_READY for j in self.jobs)} with email, "
+                    f"{sum(j['status'] == bot.STATUS_SITE for j in self.jobs)} apply on site, "
+                    f"{len(self.jobs)} checked")
+        self.count_lbl.config(text=text, wraplength=round(560 * self.scale), justify="left")
         if again:
             self.tree.selection_set(again)
             self.tree.see(again)
@@ -898,13 +1045,12 @@ class App(tk.Tk):
     def show_detail(self):
         j = self.selected()
         self.set_job_buttons(j)
+        if not j:
+            self.show_start()
+            return
         t = self.detail
         t.config(state="normal")
         t.delete("1.0", "end")
-        if not j:
-            t.insert("end", "Pick a job on the left to see the details.", "h2")
-            t.config(state="disabled")
-            return
         t.insert("end", j["title"] + "\n", "h1")
         t.insert("end", f"{j['company']}  ·  {j['location'][:120]}\n", "h2")
         facts = [("Status", LABEL.get(j["status"], j["status"]) + (f"  ({j['why']})" if j.get("why") else "")),
@@ -923,14 +1069,63 @@ class App(tk.Tk):
         t.config(state="disabled")
         t.yview_moveto(0)
 
+    def show_start(self):
+        """The getting-started checklist, shown while no job is picked. Each open step is a link that does it."""
+        cfg = read_config()
+        try:
+            with open(PROFILE, encoding="utf-8-sig") as f:
+                name = json.load(f).get("name", "")
+        except (OSError, ValueError, AttributeError):
+            name = ""
+        steps = [
+            (has_key(cfg, "gemini_api_key"), "Connect Gemini (free)", self.keys,
+             "Gemini writes your tailored CVs. The key is free and needs no card."),
+            (bool(name), f"Upload your CV{f'  ({name})' if name else ''}", self.upload_cv,
+             "Gemini reads it once and builds your profile. Every CV it makes uses only facts from it."),
+            (bool(self.jobs), "Find jobs", self.find_jobs,
+             "Pick a job type (or type keywords) and your country above, then press Find jobs."),
+            (has_key(cfg, "gmail_address") and has_key(cfg, "gmail_app_password"), "Connect Gmail (optional)", self.keys,
+             "Saves each application as a Gmail draft for you to check and send. Without it you get the PDFs."),
+        ]
+        t = self.detail
+        t.config(state="normal")
+        t.delete("1.0", "end")
+        t.insert("end", "Getting started\n", "h1")
+        t.insert("end", "Pick a job on the left to see it here. New to Job Hunter? Four steps:\n", "h2")
+        for i, (ok, text, action, note) in enumerate(steps, 1):
+            if ok:
+                t.insert("end", f"✔  {text}\n", "done")
+            else:
+                tag = f"step{i}"
+                t.tag_configure(tag, foreground=ACCENT, underline=True)
+                t.tag_bind(tag, "<Button-1>", lambda e, a=action: a())
+                t.tag_bind(tag, "<Enter>", lambda e: t.config(cursor="hand2"))
+                t.tag_bind(tag, "<Leave>", lambda e: t.config(cursor=""))
+                t.insert("end", f"{i}.  ", "todo")
+                t.insert("end", text, ("todo", tag))
+                t.insert("end", "\n")
+            t.insert("end", note + "\n", "muted")
+        t.insert("end", "\nThen, for each job: ", "key")
+        t.insert("end", "Draft email + CV when it has an email, or Make CV + cover letter to apply on the company's "
+                        "site. Mark as applied when you have sent it. Read every CV and email before you send it.\n")
+        t.insert("end", "\nShortcuts: ", "key")
+        t.insert("end", "F5 find jobs  ·  Ctrl+F search the list  ·  Enter open the job page  ·  "
+                        "hover over a button to see what it does.\n")
+        t.config(state="disabled")
+
     def set_job_buttons(self, j):
         busy = self.proc is not None
-        open_ = j is not None and j["status"] in ("ready", "apply on site")
-        self.b_open.state(["!disabled"] if j else ["disabled"])
-        self.b_copy.state(["!disabled"] if j and j.get("email") else ["disabled"])
-        self.b_draft.state(["!disabled"] if open_ and j.get("email") and not busy else ["disabled"])
-        self.b_cv.state(["!disabled"] if j and j["status"] != "rejected" and not busy else ["disabled"])
-        self.b_skip.state(["!disabled"] if open_ and not busy else ["disabled"])
+        open_ = j is not None and j["status"] in (bot.STATUS_READY, bot.STATUS_SITE)
+        cv, letter = job_files(j["id"]) if j else (None, None)
+        on = lambda ok: ["!disabled"] if ok else ["disabled"]
+        self.b_open.state(on(j))
+        self.b_copy.state(on(j and j.get("email")))
+        self.b_draft.state(on(open_ and j.get("email") and not busy))
+        self.b_cv.state(on(j and j["status"] != bot.STATUS_REJECTED and not busy))
+        self.b_skip.state(on(open_ and not busy))
+        self.b_applied.state(on(j and j.get("why") != "applied by you" and not busy))
+        self.b_files.state(on(cv))
+        self.b_letter.state(on(letter and os.path.exists(letter[:-4] + ".txt")))
 
     # ---------- running bot.py ----------
 
@@ -940,7 +1135,7 @@ class App(tk.Tk):
         self.write_log(f"\n▶ {what}\n", "head")
         self.status_lbl.config(text=f"{what} …")
         try:
-            self.proc = subprocess.Popen([*BOT, *args], cwd=HERE,
+            self.proc = subprocess.Popen([*BOT, *args], cwd=bot.CODE,
                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except OSError as e:
@@ -1047,8 +1242,31 @@ class App(tk.Tk):
             self.search.set("")
             self.run_bot(["--dry-run"], "Searching job sites (takes 1-3 minutes)")
 
+    def ready_for(self, gmail=False):
+        """True when the keys and profile a Gemini action needs are there; otherwise opens what is missing.
+        gmail=True: for a draft. Returns "cv" when Gmail is missing and you chose a CV + cover letter instead."""
+        cfg = read_config()
+        if not has_key(cfg, "gemini_api_key"):
+            messagebox.showinfo("Job Hunter", "First connect Gemini (free): it writes your tailored CVs.", parent=self)
+            self.keys()
+            return False
+        if not os.path.exists(PROFILE):
+            if messagebox.askyesno("Job Hunter", "Upload your CV first: every tailored CV is made only from the "
+                                                 "facts in it.\n\nUpload it now?", parent=self):
+                self.upload_cv(ask=False)
+            return False
+        if gmail and not (has_key(cfg, "gmail_address") and has_key(cfg, "gmail_app_password")):
+            answer = messagebox.askyesnocancel(
+                "Gmail is not connected", "A draft needs Gmail.\n\nYes: connect Gmail now.\n"
+                                          "No: make the CV + cover letter (PDF) instead, and the email text to "
+                                          "send yourself.", parent=self)
+            if answer:
+                self.keys()
+            return "cv" if answer is False else False
+        return True
+
     def auto_draft(self):
-        if self.save_filter():
+        if self.ready_for() and self.save_filter():
             self.search.set("")
             self.run_bot([], "Finding jobs and drafting the best matches")
 
@@ -1056,9 +1274,15 @@ class App(tk.Tk):
         j = self.selected()
         if not j:
             return
+        if mode in ("draft", "cv"):
+            ok = self.ready_for(gmail=mode == "draft")
+            if not ok:
+                return
+            mode = "cv" if ok == "cv" else mode
         what = {"draft": f"Drafting email + CV for {j['company']}",
                 "cv": f"Making CV + cover letter for {j['company']}",
-                "skip": f"Skipping {j['company']}"}[mode]
+                "skip": f"Skipping {j['company']}",
+                "applied": f"Marking {j['company']} as applied"}[mode]
         self.run_bot(["--job", j["id"], mode], what)
 
     # ---------- simple actions ----------
@@ -1069,12 +1293,67 @@ class App(tk.Tk):
         if url and url.lower().startswith(("https://", "http://")):
             webbrowser.open(url)
 
+    def copy(self, text, what):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status_lbl.config(text=f"Copied {what}.")
+
     def copy_email(self):
         j = self.selected()
         if j and j.get("email"):
-            self.clipboard_clear()
-            self.clipboard_append(j["email"])
-            self.status_lbl.config(text=f"Copied {j['email']}")
+            self.copy(j["email"], j["email"])
+
+    def copy_letter(self):
+        j = self.selected()
+        letter = j and job_files(j["id"])[1]
+        try:
+            with open(letter[:-4] + ".txt", encoding="utf-8") as f:
+                self.copy(f.read(), "the cover letter")
+        except (OSError, TypeError):
+            self.status_lbl.config(text="No cover letter for this job yet. Press Make CV + cover letter.")
+
+    def open_job_files(self):
+        j = self.selected()
+        for path in (job_files(j["id"]) if j else ()):
+            if path:
+                os.startfile(path)
+
+    def menu_button(self, parent, text, items):
+        """A toolbar button that opens a menu of (label, command) items; None draws a line."""
+        mb = ttk.Menubutton(parent, text=text)
+        menu = tk.Menu(mb, tearoff=False, font=("Segoe UI", 10))
+        for item in items:
+            if item is None:
+                menu.add_separator()
+            else:
+                menu.add_command(label=item[0], command=item[1])
+        mb["menu"] = menu
+        mb.pack(side="left", padx=(0, 6))
+        return mb
+
+    def check_update(self, quiet=True):
+        """Show a button when GitHub has a newer release. quiet: say nothing when up to date or offline."""
+        def work():
+            tag = latest_release()
+            self.after(0, done, tag)
+
+        def done(tag):
+            if tag and version_tuple(tag) > version_tuple(bot.VERSION):
+                self.update_btn.config(text=f"⬆  Update to {tag}")
+                self.update_btn.pack(side="right", padx=(0, 8))
+                if not quiet and messagebox.askyesno("Job Hunter", f"Version {tag} is out (you have "
+                                                     f"{bot.VERSION}).\n\nOpen the download page?", parent=self):
+                    webbrowser.open(RELEASES)
+            elif not quiet:
+                messagebox.showinfo("Job Hunter", f"You have the latest version ({bot.VERSION})." if tag else
+                                    "Could not reach GitHub. Check your internet connection.", parent=self)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def about(self):
+        messagebox.showinfo("About Job Hunter", f"Job Hunter {bot.VERSION}\n\nFree, open-source remote job search "
+                            "with tailored CVs written by Google Gemini. It never sends anything itself.\n\n"
+                            f"Your files: {HERE}\n\nhttps://github.com/{bot.REPO}", parent=self)
 
     def open_gmail(self):
         who = read_config().get("gmail_address", "")
@@ -1085,16 +1364,29 @@ class App(tk.Tk):
         os.makedirs(os.path.join(HERE, "cvs"), exist_ok=True)
         os.startfile(os.path.join(HERE, "cvs"))
 
+    def open_file(self, path, missing):
+        if os.path.exists(path):
+            os.startfile(path)
+        else:
+            self.status_lbl.config(text=missing)
+
     def open_tracker(self):
-        if os.path.exists(TRACKER):
-            os.startfile(TRACKER)
+        self.open_file(TRACKER, "No tracker yet: it starts with the first CV, draft or skipped job.")
 
     def open_profile(self):
+        if not os.path.exists(PROFILE):
+            if messagebox.askyesno("My profile", "You have no profile yet. Upload your CV to make one?", parent=self):
+                self.upload_cv(ask=False)
+            return
         subprocess.Popen(["notepad.exe", PROFILE])
 
     def upload_cv(self, ask=True):
-        path = filedialog.askopenfilename(parent=self, title="Choose your CV",
-                                          filetypes=[("CV", "*.pdf *.docx *.txt *.md"), ("All files", "*.*")])
+        if not has_key(read_config(), "gemini_api_key"):
+            messagebox.showinfo("Upload my CV", "First connect Gemini (free): it reads your CV.", parent=self)
+            self.keys()
+            return
+        path = filedialog.askopenfilename(parent=self, title="Choose your CV", filetypes=[
+            ("CV", "*.pdf *.docx *.txt *.md *.png *.jpg *.jpeg *.webp"), ("All files", "*.*")])
         if not path:
             return
         if ask and not messagebox.askokcancel("Upload my CV", "Gemini will read this CV and rebuild profile.json from it.\n\n"
@@ -1104,6 +1396,8 @@ class App(tk.Tk):
         self.run_bot(["--import-cv", path], f"Reading your CV: {os.path.basename(path)}")
 
     def paste_job(self):
+        if not self.ready_for():
+            return
         win = tk.Toplevel(self, background=DIALOG)
         win.title("Tailor CV to a job description")
         win.transient(self)
@@ -1150,9 +1444,7 @@ class App(tk.Tk):
         win.grab_set()
 
     def open_runs(self):
-        p = os.path.join(HERE, "runs.log")
-        if os.path.exists(p):
-            os.startfile(p)
+        self.open_file(bot.RUNS_LOG, "No run log yet: it starts with the first search.")
 
     # ---------- scheduled task ----------
 
@@ -1205,17 +1497,18 @@ class App(tk.Tk):
         fields = combine(picked)[1] if picked else ["all"]
         new = dict(keywords=words(self.kw), exclude_keywords=words(self.excl), max_job_age_days=age,
                    worldwide_only=self.pk_only.get(), keywords_in_title=self.title_only.get(), job_fields=fields,
-                   job_types=picked)
+                   job_types=picked, my_region_words=words(self.region))
         if any(cfg.get(k) != v for k, v in new.items()):
             cfg.update(new)
             cfg.pop("pakistan_only", None)
-            with open(CONFIG, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
+            write_config(cfg)
+            region = ", ".join(new["my_region_words"])
             self.write_log(f"\nFilter saved: {self.preset.get()} | keywords {', '.join(new['keywords'])}"
                            + (" (in title)" if new["keywords_in_title"] else "")
                            + (f" | exclude {', '.join(new['exclude_keywords'])}" if new["exclude_keywords"] else "")
                            + f" | max age {age} days"
-                           + (" | worldwide/my region only\n" if new["worldwide_only"] else " | any country\n"))
+                           + ((f" | worldwide or {region} only\n" if region else " | worldwide only\n")
+                              if new["worldwide_only"] else " | any country\n"))
         return True
 
     def keys(self, first=False):
@@ -1281,8 +1574,7 @@ class App(tk.Tk):
         def save(new):
             cfg = read_config()
             cfg.update(new)
-            with open(CONFIG, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
+            write_config(cfg)
             win.destroy()
             self.status_lbl.config(text="Keys saved.")
             if first and not os.path.exists(PROFILE) and messagebox.askyesno(
@@ -1339,27 +1631,33 @@ class App(tk.Tk):
         frm = ttk.Frame(win, padding=16)
         frm.pack()
         vars_ = {}
-        for i, (key, label, _) in enumerate(SETTINGS):
-            ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", pady=4)
-            v = tk.StringVar(value=str(cfg.get(key, bot.DEFAULT_CONFIG.get(key, ""))))
-            ttk.Entry(frm, textvariable=v, width=26).grid(row=i, column=1, padx=(12, 0), pady=4)
+        for i, (key, label, lo, hi, note) in enumerate(SETTINGS):
+            ttk.Label(frm, text=label, font=("Segoe UI", 10, "bold")).grid(row=2 * i, column=0, sticky="w",
+                                                                          pady=(8, 0))
+            v = tk.StringVar(value=str(cfg.get(key, bot.DEFAULT_CONFIG[key])))
+            ttk.Spinbox(frm, from_=lo, to=hi, textvariable=v, width=8).grid(row=2 * i, column=1, sticky="w",
+                                                                            padx=(12, 0), pady=(8, 0))
+            ttk.Label(frm, text=note, foreground=MUTED, wraplength=round(380 * self.scale)).grid(
+                row=2 * i + 1, column=0, columnspan=2, sticky="w")
             vars_[key] = v
 
         def save():
             new = read_config()
-            try:
-                for key, label, typ in SETTINGS:
-                    new[key] = typ(vars_[key].get().strip())
-            except ValueError:
-                messagebox.showerror("Settings", f"'{label}' must be a number.", parent=win)
-                return
-            with open(CONFIG, "w", encoding="utf-8") as f:
-                json.dump(new, f, indent=2)
+            for key, label, lo, hi, _ in SETTINGS:
+                try:
+                    n = int(vars_[key].get().strip())
+                except ValueError:
+                    n = None
+                if n is None or not lo <= n <= hi:
+                    messagebox.showerror("Settings", f"{label}: type a whole number from {lo} to {hi}.", parent=win)
+                    return
+                new[key] = n
+            write_config(new)
             win.destroy()
             self.status_lbl.config(text="Settings saved.")
 
         btns = ttk.Frame(frm)
-        btns.grid(row=len(SETTINGS), column=0, columnspan=2, pady=(12, 0), sticky="ew")
+        btns.grid(row=2 * len(SETTINGS), column=0, columnspan=2, pady=(16, 0), sticky="ew")
         ttk.Button(btns, text="🔑  Gmail & Gemini keys…",
                    command=lambda: (win.destroy(), self.keys())).pack(side="left")
         ttk.Button(btns, text="Save", style="Big.TButton", command=save).pack(side="right")

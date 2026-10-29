@@ -1,25 +1,25 @@
 """Standalone remote job hunter. Uses no Claude.
 
 Each run:
-  1. pulls remote jobs from Remotive, RemoteOK, Arbeitnow, Himalayas and the
-     latest Hacker News "Who is hiring?" thread
+  1. pulls remote jobs from Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely,
+     Working Nomads and the latest Hacker News "Who is hiring?" thread
   2. keeps roles matching your keywords that are remote, recent and (unless turned off)
      open worldwide or to your region
   3. finds an application email published in the post, or on the company's
      own careers/jobs/contact page
   4. asks Gemini (free tier) to check the fit and write the tailoring + email
   5. builds a tailored CV with cv.py and saves a Gmail DRAFT with it attached
-     (IMAP). Nothing is ever sent.
+     (IMAP), or, without Gmail, the CV + cover letter + email text as files. Nothing is ever sent.
 
 Usage:
   python -I bot.py            normal run (needs config.json)
   python -I bot.py --dry-run  find and filter only; no Gemini, no Gmail
-  python -I bot.py --job ID [draft|cv|skip]
+  python -I bot.py --job ID [draft|cv|skip|applied]
                               act on one job from jobs.json (used by gui.py)
   python -I bot.py --custom job.json
                               CV + cover letter for a pasted job ({title, company, text, url?})
   python -I bot.py --import-cv my-cv.pdf
-                              rebuild profile.json from your CV (.pdf, .docx or .txt)
+                              rebuild profile.json from your CV (.pdf, .docx, .txt or a photo)
   python -I gui.py            point-and-click window
 """
 import base64
@@ -47,10 +47,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Your files (config, profile, CVs, tracker) live next to the scripts. The installed JobHunter.exe sits in a
 # read-only program folder, so it keeps them in %APPDATA%\Job Hunter instead.
 FROZEN = getattr(sys, "frozen", False)
-HERE = (os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Job Hunter") if FROZEN
-        else os.path.dirname(os.path.abspath(__file__)))
+# JOBHUNTER_HOME overrides both: a portable copy, or tests that must not touch your real files.
+HERE = os.environ.get("JOBHUNTER_HOME") or (
+    os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Job Hunter") if FROZEN
+    else os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(HERE, exist_ok=True)
-UA = {"User-Agent": "Mozilla/5.0 (compatible; JobHunter/1.0; +https://github.com/Ahsan483/job-hunter)"}
+CODE = os.path.dirname(os.path.abspath(__file__))  # bot.py and cv.py
+VERSION = "1.2.0"  # installer/build.ps1 checks that the release tag matches
+REPO = "Ahsan483/job-hunter"
+UA = {"User-Agent": f"Mozilla/5.0 (compatible; JobHunter/{VERSION}; +https://github.com/{REPO})"}
 MIN_GAP = 1.5  # seconds between two requests to the same site
 REMOTIVE_CACHE = os.path.join(HERE, "remotive_cache.json")
 REMOTIVE_TTL = 6 * 3600  # Remotive asks for at most 4 fetches a day
@@ -348,9 +353,14 @@ def parse_date(v):
         return None
     try:
         if isinstance(v, (int, float)) or str(v).isdigit():
-            d = dt.datetime.fromtimestamp(int(v), dt.timezone.utc)
+            ts = int(v)
+            if ts > 10 ** 11:  # milliseconds; on Windows fromtimestamp() raises OSError for these
+                ts //= 1000
+            d = dt.datetime.fromtimestamp(ts, dt.timezone.utc)
         else:
             d = dt.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except (OverflowError, OSError):
+        return None
     except ValueError:
         try:
             d = email.utils.parsedate_to_datetime(str(v))
@@ -552,8 +562,10 @@ def prefilter(job, now):
         return "no post date"
     if (now - job["date"]).days > MAX_AGE_DAYS:
         return "too old"
+    # Every other source lists remote jobs only (Arbeitnow is filtered on its own remote flag), so a location
+    # like "Philippines" there still means remote. HN posts are any kind of job and must say so.
     where = job["location"] + " " + job["text"][:3000]
-    if not (REMOTE_OK_LOC.search(where) or (REGION and REGION.search(where))):
+    if job["source"] == "hn" and not (REMOTE_OK_LOC.search(where) or (REGION and REGION.search(where))):
         return "not remote"
     if WORLDWIDE_ONLY:
         if BLOCK_LOC.search(blob):
@@ -563,9 +575,23 @@ def prefilter(job, now):
     head = job["location"] if job["source"] == "hn" else job["location"] + " " + job["title"]
     if ONSITE.search(head) and not re.search(r"remote", head, re.I):
         return "onsite/hybrid"
-    if MAX_YEARS and any(int(n) >= MAX_YEARS for n, _ in YEARS_ASKED.findall(blob)):
+    if MAX_YEARS and max(years_asked(blob), default=0) >= MAX_YEARS:
         return f"{MAX_YEARS}+ years"
     return None
+
+
+ABOUT_COMPANY = re.compile(r"\b(company|companies|we|we've|we have|our|founded|history|business|brand|industry)\b", re.I)
+
+
+def years_asked(text):
+    """Years of experience a post asks for. "A company with 30+ years of experience" is about the company, and
+    no post asks for more than 20 years, so those are left out."""
+    out = []
+    for m in YEARS_ASKED.finditer(text):
+        n = int(m.group(1))
+        if n <= 20 and not ABOUT_COMPANY.search(text[max(0, m.start() - 40):m.start()]):
+            out.append(n)
+    return out
 
 
 def find_emails_in_text(t):
@@ -688,6 +714,7 @@ Decide and write. Return ONLY JSON with exactly these keys:
  "body": "plain-text email, 120-200 words",
  "cover_letter": "one-page cover letter, 250-350 words, 4-5 paragraphs separated by a blank line"
 }}
+These words are in the job ad but NOT in PROFILE. Never put them in the title, summary or rewrites (the CV check removes any sentence that uses one): {avoid}
 Rewrites: reword the 2-3 bullets per role that matter most for this job. Never add a technology, tool, software, certification, language, number, client or responsibility that is not in PROFILE: if the job asks for C++ and PROFILE has C#, write about C#, never C++; if it asks for SAP and PROFILE has QuickBooks, write about QuickBooks.
 Email rules: greeting to the company team (or the person if the post names who to email); say which role and where it was seen; 2-3 short sentences matching their requirements to real facts and numbers from PROFILE, only the relevant ones; "I'm based in {location_short}, available for remote work and able to overlap with your team's hours."; links: {links}; "My CV is attached."; ask for a short call; sign off with {sign_off}.
 Cover letter rules: start "Dear <team or the person named in the post>,"; paragraph 1: the role, where it was seen, one specific reason this company or product fits; paragraphs 2-3: take the job's 3-4 main requirements and answer each with a concrete PROFILE fact (project, result, number); only paragraph 1 may describe the company's product; from paragraph 2 on, describe only work PROFILE says {name} did, in PROFILE's own terms, without adding the job's wording to it; if the job needs something PROFILE does not have, say plainly and briefly which PROFILE experience is closest and how it transfers, never claim it; no inflated words like "extensive", "deep", "massive", "expert"; last paragraph: remote from {location_short}, overlap with their hours, ask for a call; end "Sincerely,\\n{name}". No address block, no date, no links, no markdown.
@@ -887,6 +914,13 @@ def gemini(cfg, prompt, attach=None):
 
 
 def safe(result, profile):
+    if not isinstance(result.get("tailor"), dict):
+        result["tailor"] = {}
+    if not isinstance(result.get("fit_score"), (int, float)):
+        try:
+            result["fit_score"] = int(str(result.get("fit_score", 0)).strip().rstrip("%"))
+        except ValueError:
+            result["fit_score"] = 0
     titles = " ".join([profile.get("default_title", "")] + [e.get("title", "") for e in profile.get("experience", [])])
     if not re.search(r"\b(senior|lead)\b", titles, re.I) and \
             re.search(r"\b(senior|lead)\b", result.get("tailor", {}).get("title", ""), re.I):
@@ -917,26 +951,42 @@ def words(text):
 def new_facts(text, known, borrowed=()):
     """Tools/numbers in text that profile.json never mentions (sentence-initial words are ignored),
     plus any word from `borrowed` (job-ad words that are not in profile.json)."""
-    out = sorted(words(text) & set(borrowed))
+    tools = []
     for m in FACT_WORD.finditer(text or ""):
         w = m.group().strip(".,;:()/-")
         before = text[:m.start()].rstrip()
         if not w or not before or before[-1] in ".:!?" or len(w) < 2:
             continue
         if w.lower() not in known:
-            out.append(w)
-    return out
+            tools.append(w)
+    named = {t.lower().rstrip("s") for t in tools}  # "Kubernetes" is already listed: no "kubernete" too
+    return sorted(w for w in words(text) & set(borrowed) if w not in named) + tools
+
+
+def borrowed_words(job_text, profile):
+    """Content words of the job ad that profile.json never uses: the CV must not claim them."""
+    return words(job_text) - words(json.dumps(profile, ensure_ascii=False))
 
 
 def check_tailor(tailor, profile, job_text):
-    """Drop any reworded line that brings in a tool, language, number or job-ad claim not in profile.json."""
+    """Drop any reworded line that brings in a tool, language, number or job-ad claim not in profile.json.
+    The summary loses only the sentences that do; it falls back to the default only when none is left."""
     known = json.dumps(profile, ensure_ascii=False).lower()
-    borrowed = words(job_text) - words(known)
-    for key, fallback in (("title", profile["default_title"]), ("summary", profile["default_summary"])):
-        bad = new_facts(tailor.get(key, ""), known, borrowed)
+    borrowed = borrowed_words(job_text, profile)
+    bad = new_facts(tailor.get("title", ""), known, borrowed)
+    if bad:
+        log(f"  title mentioned {', '.join(bad)} (not in your profile), using your default title")
+        tailor["title"] = profile["default_title"]
+    kept, dropped = [], []
+    for sentence in re.split(r"(?<=[.!?])\s+", (tailor.get("summary") or "").strip()):
+        bad = new_facts(sentence, known, borrowed)
         if bad:
-            log(f"  {key} mentioned {', '.join(bad)} (not in your profile), using your default {key}")
-            tailor[key] = fallback
+            dropped.append(", ".join(bad))
+        elif sentence:
+            kept.append(sentence)
+    if dropped:
+        log(f"  summary: removed {len(dropped)} sentence(s) that mentioned {'; '.join(dropped)} (not in your profile)")
+    tailor["summary"] = " ".join(kept) if len(" ".join(kept)) >= 80 else profile["default_summary"]
     bullets = {e["id"]: e["bullets"] for e in profile["experience"]}
     for eid, lines in list((tailor.get("rewrites") or {}).items()):
         if eid not in bullets or not isinstance(lines, dict):
@@ -959,22 +1009,32 @@ def run_cv_py(data, json_path, pdf, *flags):
         json.dump(data, f, indent=1, ensure_ascii=False)
     if os.path.exists(pdf):
         os.remove(pdf)
-    cmd = [sys.executable, "--cv"] if FROZEN else [sys.executable, "-I", os.path.join(HERE, "cv.py")]
-    r = subprocess.run([*cmd, *flags, json_path, pdf], capture_output=True, text=True, timeout=180,
+    cmd = [sys.executable, "--cv"] if FROZEN else [sys.executable, "-I", os.path.join(CODE, "cv.py")]
+    r = subprocess.run([*cmd, *flags, json_path, pdf], capture_output=True, text=True, timeout=300,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if not os.path.exists(pdf):
-        raise RuntimeError("cv.py failed: " + (r.stderr or r.stdout)[-300:])
+        raise RuntimeError("Could not make the PDF: " + (r.stderr or r.stdout).strip()[-300:])
     return pdf
 
 
-def build_cv(tailor, company, today):
-    s = slug(company)
+def job_slug(company, role):
+    """File-name part for one job: two roles at the same company must not overwrite each other's CV."""
+    return f"{slug(company)}-{slug(role)[:30]}".strip("-")
+
+
+def letter_of(cv_file):
+    """The cover letter that goes with a CV file name, e.g. Jane-CV-acme-dev.pdf -> Jane-Cover-Letter-acme-dev.pdf."""
+    return cv_file.replace("-CV-", "-Cover-Letter-", 1)
+
+
+def build_cv(tailor, company, role, today):
+    s = job_slug(company, role)
     return run_cv_py(tailor, os.path.join(HERE, "tailor", f"{today}-{s}.json"),
                      os.path.join(HERE, "cvs", f"{file_prefix()}-CV-{s}.pdf"))
 
 
 def build_letter(text, company, role, today):
-    s = slug(company)
+    s = job_slug(company, role)
     return run_cv_py(dict(company=company, role=role, text=text),
                      os.path.join(HERE, "tailor", f"{today}-{s}-letter.json"),
                      os.path.join(HERE, "cvs", f"{file_prefix()}-Cover-Letter-{s}.pdf"), "--letter")
@@ -998,7 +1058,7 @@ def save_draft(cfg, to, subject, body, pdf):
     msg.set_content(body)
     with open(pdf, "rb") as f:
         msg.add_attachment(f.read(), maintype="application", subtype="pdf", filename=f"{file_prefix()}-CV.pdf")
-    imap = imaplib.IMAP4_SSL(cfg["imap_host"])
+    imap = imaplib.IMAP4_SSL(cfg["imap_host"], timeout=60)
     try:
         imap.login(cfg["gmail_address"], cfg["gmail_app_password"].replace(" ", ""))
         typ, data = imap.append(drafts_folder(imap), "\\Draft", imaplib.Time2Internaldate(time.time()), msg.as_bytes())
@@ -1017,20 +1077,47 @@ JOBS_FILE = os.path.join(HERE, "jobs.json")
 STATUS_READY, STATUS_SITE, STATUS_DONE, STATUS_REJECTED = "ready", "apply on site", "done", "rejected"
 
 
+NUMBERS = ("max_drafts_per_run", "max_drafts_per_day", "max_gemini_calls_per_run", "min_fit_score",
+           "max_job_age_days", "max_years_required")
+
+
 def load_config():
     path = os.path.join(HERE, "config.json")
     cfg = dict(DEFAULT_CONFIG)
     if os.path.exists(path):
-        with open(path, encoding="utf-8-sig") as f:
-            cfg.update(json.load(f))
+        try:
+            with open(path, encoding="utf-8-sig") as f:
+                cfg.update(json.load(f))
+        except ValueError as e:
+            raise RuntimeError(f"config.json is not valid JSON ({e}). Fix it in Notepad, or delete it and enter "
+                               "your keys again in the window.") from None
+    for k in NUMBERS:  # a hand-edited "3" or "" must not break the run
+        try:
+            cfg[k] = int(cfg[k])
+        except (TypeError, ValueError):
+            cfg[k] = DEFAULT_CONFIG[k]
+    for k in ("gmail_address", "gmail_app_password", "gemini_api_key", "imap_host", "gemini_model"):
+        cfg[k] = str(cfg.get(k) or "").strip()
+    cfg["imap_host"] = cfg["imap_host"] or DEFAULT_CONFIG["imap_host"]
     return cfg
 
 
-def check_config(cfg):
-    keys = (cfg["gmail_address"], cfg["gmail_app_password"], cfg["gemini_api_key"])
-    if not all(k and not k.startswith("PUT-") for k in keys):
-        raise RuntimeError("Gmail or Gemini is not connected yet: press Settings, then Gmail & Gemini keys "
-                           "(or fill in gmail_address, gmail_app_password and gemini_api_key in config.json)")
+def is_set(v):
+    return bool(v) and not v.startswith("PUT-")
+
+
+def has_gmail(cfg):
+    return is_set(cfg["gmail_address"]) and is_set(cfg["gmail_app_password"])
+
+
+def check_config(cfg, gmail=False):
+    """Gemini is needed for anything that writes; Gmail only for saving drafts."""
+    if not is_set(cfg["gemini_api_key"]):
+        raise RuntimeError("Gemini is not connected yet: press Settings, then Gmail & Gemini keys "
+                           "(or fill in gemini_api_key in config.json)")
+    if gmail and not has_gmail(cfg):
+        raise RuntimeError("Gmail is not connected, so no draft can be saved. Press Settings, then Gmail & Gemini "
+                           "keys, or use Make CV + cover letter instead (it needs no Gmail).")
 
 
 def pid_alive(pid):
@@ -1078,8 +1165,37 @@ def load_profile():
     if not os.path.exists(path):
         raise RuntimeError("profile.json not found: copy profile.example.json to profile.json and fill it in, "
                            "or press Upload my CV in the window")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            p = json.load(f)
+    except ValueError as e:
+        raise RuntimeError(f"profile.json has a typo ({e}). Press My profile to fix it, or Upload my CV again. "
+                           "A missing comma or quote is the usual cause.") from None
+    return normalise_profile(p)
+
+
+def normalise_profile(p):
+    """Fill in what a hand-edited profile.json left out, so a missing key never crashes a run."""
+    if not isinstance(p, dict) or not str(p.get("name") or "").strip():
+        raise RuntimeError("profile.json has no \"name\". Press My profile to fix it, or Upload my CV again.")
+    exps = [e for e in p.get("experience") or [] if isinstance(e, dict)]  # may be empty: students, career changers
+    for i, e in enumerate(exps):
+        e["id"] = str(e.get("id") or slug(e.get("company") or f"role-{i + 1}"))
+        e["bullets"] = [str(b) for b in e.get("bullets") or [] if str(b).strip()]
+        for k in ("company", "place", "title", "dates", "note"):
+            e[k] = str(e.get(k) or "")
+    p["experience"] = exps
+    p["projects"] = [dict(pr, id=str(pr.get("id") or slug(pr.get("name"))), name=str(pr.get("name") or ""),
+                          text=str(pr.get("text") or ""))
+                     for pr in p.get("projects") or [] if isinstance(pr, dict)]
+    skills = p.get("skills") if isinstance(p.get("skills"), dict) else {}
+    p["skills"] = {k: clean_words(v) if isinstance(v, str) else [str(s) for s in v]
+                   for k, v in skills.items() if isinstance(v, (list, str))}
+    p["contact"] = p.get("contact") if isinstance(p.get("contact"), dict) else {}
+    for k in ("location", "years", "education", "default_summary"):
+        p[k] = str(p.get(k) or "")
+    p["default_title"] = str(p.get("default_title") or (exps[0]["title"] if exps else ""))
+    return p
 
 
 def file_prefix():
@@ -1187,7 +1303,9 @@ def job_prompt(profile, j):
     links = " , ".join(f"{label} {c[k]}" for label, k in
                        (("Portfolio", "portfolio"), ("GitHub", "github"), ("LinkedIn", "linkedin")) if c.get(k))
     home = profile.get("location") or "my country"
+    avoid = sorted(borrowed_words(f"{j['title']}\n{j['text'][:9000]}", profile))[:120]
     return GEMINI_PROMPT.format(profile=json.dumps(profile, ensure_ascii=False), source=j["source"],
+                                avoid=", ".join(avoid) or "(none)",
                                 url=j["url"], title=j["title"], company=j["company"], job_location=j["location"],
                                 text=j["text"][:9000], name=profile["name"], location=home,
                                 location_short=re.sub(r",?\s*open to remote.*$", "", home, flags=re.I),
@@ -1200,13 +1318,15 @@ def tailor_job(cfg, profile, j, today, min_fit=None):
     """Ask Gemini about one job and build the tailored CV. Returns (result, pdf), pdf is None if skipped.
     min_fit=0 means you asked for this CV yourself: it is made even if Gemini thinks you are not eligible."""
     res = gemini(cfg, job_prompt(profile, j))
+    if not isinstance(res, dict):
+        res = {}
     problem = safe(res, profile)
     min_fit = cfg["min_fit_score"] if min_fit is None else min_fit
     if (min_fit and not res.get("eligible")) or res.get("fit_score", 0) < min_fit or problem:
         res["skip_reason"] = problem or res.get("reason", "")
         return res, None
     check_tailor(res["tailor"], profile, f"{j['title']}\n{j['text']}")
-    return res, build_cv(res["tailor"], j["company"], today.isoformat())
+    return res, build_cv(res["tailor"], j["company"], j["title"], today.isoformat())
 
 
 def draft_job(cfg, profile, j, today):
@@ -1226,25 +1346,34 @@ def draft_job(cfg, profile, j, today):
     return True
 
 
-def cv_only_job(cfg, profile, j, today):
-    """For jobs without an email: tailored CV + cover letter to upload on the company's site."""
-    res, pdf = tailor_job(cfg, profile, j, today, min_fit=0)
+def cv_only_job(cfg, profile, j, today, min_fit=0):
+    """Tailored CV + cover letter: to upload on the company's site, or to email yourself when Gmail is not
+    connected. min_fit=0 (you asked for it) makes it whatever Gemini thinks of the fit."""
+    res, pdf = tailor_job(cfg, profile, j, today, min_fit=min_fit)
     if not pdf:
-        log(f"No CV made for {j['company']}: {res['skip_reason']}")
+        if min_fit:
+            log(f"skip {j['company']}: eligible={res.get('eligible')} fit={res.get('fit_score')} {res['skip_reason']}")
+            add_tracker(dict(date=today.isoformat(), company=j["company"], role=j["title"][:100],
+                             email=j.get("email", ""), post_url=j["url"], draft_id=j["id"],
+                             status=f"skipped: {res['skip_reason']}"[:150]))
+        else:
+            log(f"No CV made for {j['company']}: {res['skip_reason']}")
         return False
     if not res.get("eligible"):
         log(f"Note: Gemini thinks you may not be eligible: {res.get('reason', '')}")
     text = res.get("cover_letter") or res["body"]
     # Paragraph 1 may talk about the job; after that, job-ad words that are not in your profile need a look.
     paras = [p for p in text.split("\n\n") if p.strip()]
-    borrowed = words(f"{j['title']} {j['text']}") - words(json.dumps(profile))
-    review = sorted(words(" ".join(paras[1:-2])) & borrowed)
+    review = sorted(words(" ".join(paras[1:-2])) & borrowed_words(f"{j['title']} {j['text']}", profile))
     letter = build_letter(text, j["company"], j["title"][:120], today.isoformat())
     with open(letter[:-4] + ".txt", "w", encoding="utf-8") as f:  # for pasting into application forms
         f.write(text)
-    add_tracker(dict(date=today.isoformat(), company=j["company"], role=j["title"][:100],
+    if j.get("email"):  # no Gmail: keep the email Gemini wrote, to send yourself
+        with open(pdf[:-4] + "-email.txt", "w", encoding="utf-8") as f:
+            f.write(f"To: {j['email']}\nSubject: {res.get('subject', '')}\n\n{res['body']}\n")
+    add_tracker(dict(date=today.isoformat(), company=j["company"], role=j["title"][:100], email=j.get("email", ""),
                      post_url=j["url"], cv_file=os.path.basename(pdf), draft_id=j["id"],
-                     status="cv-made, apply on site"))
+                     status="cv-made" if j.get("email") else "cv-made, apply on site"))
     log(f"CV saved: {pdf} (fit {res.get('fit_score')})")
     log(f"Cover letter saved: {letter}")
     log(f"Gemini: {res.get('reason', '')}")
@@ -1261,7 +1390,7 @@ def run_custom(path):
     today = dt.date.today()
     j = dict(source="pasted by you", id=f"pasted-{slug(d['company'])}-{slug(d['title'])}-{today}",
              title=d["title"], company=d["company"], url=d.get("url", ""), location=d.get("location", ""),
-             text=d["text"])
+             text=d["text"], email=(find_emails_in_text(d["text"]) or [""])[0])
     cfg = load_config()
     check_config(cfg)
     if not take_lock():
@@ -1294,17 +1423,32 @@ Return ONLY JSON with exactly these keys:
 Keep experience and projects in the CV's order. Use "" for anything the CV does not have."""
 
 
+CV_FILES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp"}  # sent to Gemini as they are: it reads scanned and photographed CVs too
+MAX_ATTACH = 18_000_000  # Gemini takes up to 20 MB inline, base64 included
+
+
 def read_cv_file(path):
-    """Returns (text, attachment) for a CV: PDFs go to Gemini as they are, other files as text."""
+    """Returns (text, attachment) for a CV: PDFs and images go to Gemini as they are, other files as text."""
     ext = os.path.splitext(path)[1].lower()
-    if ext == ".pdf":
+    if ext in CV_FILES:
+        if os.path.getsize(path) * 4 / 3 > MAX_ATTACH:
+            raise RuntimeError("That file is too big for Gemini (over about 13 MB). Save the CV as a smaller PDF.")
         with open(path, "rb") as f:
-            return "", ("application/pdf", f.read())
+            return "", (CV_FILES[ext], f.read())
+    if ext == ".doc":
+        raise RuntimeError("Old Word .doc files cannot be read. In Word use File > Save As > PDF (or .docx), "
+                           "then upload that.")
     if ext == ".docx":
         import zipfile
-        with zipfile.ZipFile(path) as z:
-            xml = z.read("word/document.xml").decode("utf-8", errors="replace")
-        xml = re.sub(r"</w:p>", "\n", xml)
+        try:
+            with zipfile.ZipFile(path) as z:
+                xml = z.read("word/document.xml").decode("utf-8", errors="replace")
+        except (zipfile.BadZipFile, KeyError):
+            raise RuntimeError("That .docx file is damaged or not really a Word file. Save it as PDF and "
+                               "upload that.") from None
+        xml = re.sub(r"<w:tab/>", "\t", xml)
+        xml = re.sub(r"</w:p>|<w:br/>|<w:cr/>", "\n", xml)
         return html.unescape(re.sub(r"<[^>]+>", "", xml)), None
     with open(path, encoding="utf-8", errors="replace") as f:
         return f.read(), None
@@ -1319,28 +1463,31 @@ def import_cv(path):
         raise RuntimeError("Could not read any text from that file. Try a PDF or .docx.")
     log(f"Reading {os.path.basename(path)} with Gemini ...")
     p = gemini(cfg, IMPORT_PROMPT + (f"\n\nCV:\n{text[:30000]}" if text else ""), attach)
-    old = load_profile() if os.path.exists(os.path.join(HERE, "profile.json")) else {}
-    if not p.get("name") or not p.get("experience"):
-        raise RuntimeError("Gemini could not find a name and work experience in that CV.")
+    if not isinstance(p, dict) or not str(p.get("name") or "").strip():
+        raise RuntimeError("Gemini could not find your name in that CV. Is it the right file?")
+    try:  # a broken old profile must not stop you replacing it
+        old = load_profile() if os.path.exists(os.path.join(HERE, "profile.json")) else {}
+    except RuntimeError:
+        old = {}
     ids = set()
-    for e in p["experience"]:
+    for e in [e for e in p.get("experience") or [] if isinstance(e, dict)]:
         e["id"] = slug(e.get("id") or e.get("company"))
         while e["id"] in ids:
             e["id"] += "-2"
         ids.add(e["id"])
-        e["bullets"] = [b for b in e.get("bullets") or [] if b.strip()]
-        for k in ("company", "place", "title", "dates", "note"):
-            e[k] = e.get(k) or ""
-    p["projects"] = [dict(pr, id=slug(pr.get("id") or pr.get("name"))) for pr in p.get("projects") or []]
-    p["skills"] = {k: v for k, v in (p.get("skills") or {}).items() if isinstance(v, list) and v}
-    p["contact"] = {k: (p.get("contact") or {}).get(k) or "" for k in ("phone", "email", "linkedin", "github", "portfolio")}
-    if old.get("name", "").lower() == p["name"].lower():  # same person: keep links the CV left out
+    p["projects"] = [dict(pr, id=slug(pr.get("id") or pr.get("name"))) for pr in p.get("projects") or []
+                     if isinstance(pr, dict)]
+    p["skills"] = {k: v for k, v in (p.get("skills") or {}).items() if isinstance(v, list) and v} \
+        if isinstance(p.get("skills"), dict) else {}
+    contact = p.get("contact") if isinstance(p.get("contact"), dict) else {}
+    p["contact"] = {k: str(contact.get(k) or "") for k in ("phone", "email", "linkedin", "github", "portfolio")}
+    if str(old.get("name", "")).lower() == p["name"].lower():  # same person: keep links the CV left out
         for k, v in old.get("contact", {}).items():
-            p["contact"][k] = p["contact"][k] or v
+            p["contact"][k] = p["contact"].get(k) or v
         p["location"] = p.get("location") or old.get("location", "")
-    for k in ("default_title", "default_summary", "location", "years", "education"):
-        p[k] = p.get(k) or ""
-    p["default_title"] = p["default_title"] or (p["experience"][0]["title"])
+    p = normalise_profile(p)
+    if not p["experience"]:
+        log("No work experience found in that CV: your CVs will lead with your projects, skills and education.")
     if os.path.exists(os.path.join(HERE, "profile.json")):
         backup = os.path.join(HERE, f"profile.backup-{dt.datetime.now():%Y%m%d-%H%M%S}.json")
         os.replace(os.path.join(HERE, "profile.json"), backup)
@@ -1354,20 +1501,22 @@ def import_cv(path):
 
 
 def run_one(job_id, mode):
-    """GUI action on one saved job: mode is 'draft', 'cv' or 'skip'."""
+    """GUI action on one saved job: mode is 'draft', 'cv', 'skip' or 'applied'."""
     today = dt.date.today()
     j = next((x for x in load_jobs()["jobs"] if x["id"] == job_id), None)
     if not j:
         log("That job is no longer in jobs.json. Press Find jobs again.")
         return
-    if mode == "skip":
+    if mode in ("skip", "applied"):
+        status, why = ("skipped: by you", "skipped by you") if mode == "skip" else ("applied", "applied by you")
         add_tracker(dict(date=today.isoformat(), company=j["company"], role=j["title"][:100], email=j["email"],
-                         post_url=j["url"], draft_id=j["id"], status="skipped: by you"))
-        set_job_status(job_id, STATUS_DONE, "skipped by you")
-        log(f"Skipped {j['company']}. The bot will not draft it.")
+                         post_url=j["url"], draft_id=j["id"], status=status))
+        set_job_status(job_id, STATUS_DONE, why)
+        log(f"Skipped {j['company']}. The bot will not draft it." if mode == "skip" else
+            f"Marked {j['company']} as applied. It is in tracker.csv and the bot will not draft it again.")
         return
     cfg = load_config()
-    check_config(cfg)
+    check_config(cfg, gmail=mode == "draft")
     if not take_lock():
         log("The bot is busy with another run. Try again in a minute.")
         return
@@ -1412,10 +1561,15 @@ def main():
             log(f"Keyword {line}")
         if not dry:
             check_config(cfg)
+            if not has_gmail(cfg):
+                log("Gmail is not connected: making a CV + cover letter for the best matches instead of drafts "
+                    "(the email to send is saved next to each CV).")
         now = dt.datetime.now(dt.timezone.utc)
         today = dt.date.today()
         rows = read_tracker()
-        today_count = sum(1 for r in rows if r.get("date", "")[:10] == today.isoformat())
+        # Only what was made counts toward the daily limit, not the jobs Gemini or you skipped.
+        today_count = sum(1 for r in rows if r.get("date", "")[:10] == today.isoformat()
+                          and r.get("status", "").startswith(("draft", "cv-made")))
         profile = None if dry else load_profile()  # searching needs no CV; only drafting does
 
         jobs = collect(rows, now, today, notes)
@@ -1445,14 +1599,18 @@ def main():
                 break
             stats["gemini"] += 1
             try:
-                ok = draft_job(cfg, profile, j, today)
+                if has_gmail(cfg):
+                    ok = draft_job(cfg, profile, j, today)
+                else:
+                    ok = cv_only_job(cfg, profile, j, today, min_fit=cfg["min_fit_score"])
             except Exception as e:
                 notes.append(f"{j['company']}: {e}"[:200])
                 log(f"draft failed for {j['company']}: {e}")
                 if NO_MODEL in str(e):  # no point trying the next job
                     break
                 continue
-            set_job_status(j["id"], STATUS_DONE, "drafted" if ok else "skipped by Gemini")
+            made = "drafted" if has_gmail(cfg) else "CV made"
+            set_job_status(j["id"], STATUS_DONE, made if ok else "skipped by Gemini")
             if ok:
                 stats["drafts"] += 1
                 budget -= 1

@@ -1,38 +1,33 @@
-# Secrets: Gmail app password and Gemini key
+# Your keys and CV data: never upload these
 config.json
+profile.json
+profile.backup-*.json
 
-# Personal output and run state
+# Generated files and run state
 cvs/
 tailor/
 tracker.csv
-runs.log
 jobs.json
-jobs.json.tmp
 bot.lock
+gemini_state.json
+remotive_cache.json
+*.tmp
+*.log
 
+# Old personal notes
+INSTRUCTIONS.md
+
+# Python
 __pycache__/
 *.pyc
-
-# Backups made by "Upload my CV"
-profile.backup-*.json
-gemini_state.json
-gemini_state.json.tmp
-
-# Your own CV data (copy profile.example.json to start)
-profile.json
-# Old Claude-in-Chrome instructions with personal details
-INSTRUCTIONS.md
-remotive_cache.json
-remotive_cache.json.tmp
-
-# Just in case: environments, credentials, logs
 .env
 .venv/
 venv/
+
+# Just in case: credentials from other tools
 credentials*.json
 token*.json
 client_secret*.json
-*.log
 
 # Installer build output (installer/build.ps1)
 build/

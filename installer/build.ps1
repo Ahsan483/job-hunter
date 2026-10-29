@@ -1,14 +1,22 @@
 # Builds the Windows installer: build\installer\JobHunterSetup.exe
 #
-#   powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 1.0.0
+#   powershell -ExecutionPolicy Bypass -File installer\build.ps1            (version from bot.py)
+#   powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 1.2.0
 #
 # Needs Python 3.10+ and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 # GitHub Actions runs this for every v* tag (.github/workflows/release.yml).
-param([string]$Version = "1.0.0")
+param([string]$Version = "")  # empty: the VERSION in bot.py
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 $build = Join-Path $root "build"
 $icon = Join-Path $PSScriptRoot "icon.ico"
+
+# The window compares bot.VERSION with the latest release to offer updates, so the two must agree.
+$appVersion = (Select-String -Path (Join-Path $root "bot.py") -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+if (-not $Version) { $Version = $appVersion }
+if ($Version -ne "0.0.0" -and $Version -ne $appVersion) {
+    throw "Version $Version does not match VERSION = `"$appVersion`" in bot.py. Update bot.py first."
+}
 
 python -m pip install --disable-pip-version-check "pyinstaller==6.20.0"
 if ($LASTEXITCODE) { throw "pip install pyinstaller failed" }

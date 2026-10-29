@@ -1,7 +1,7 @@
 # Builds the Windows installer: build\installer\JobHunterSetup.exe
 #
 #   powershell -ExecutionPolicy Bypass -File installer\build.ps1            (version from bot.py)
-#   powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 1.2.0
+#   powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 1.3.0
 #
 # Needs Python 3.10+ and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 # GitHub Actions runs this for every v* tag (.github/workflows/release.yml).

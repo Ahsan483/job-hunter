@@ -57,6 +57,10 @@ VIEWS = {
     "Done, applied or skipped": {"done"},
     "Everything (incl. rejected)": {"ready", "apply on site", "done", "rejected"},
 }
+COLUMNS = ("Status", "Match", "Posted", "Company", "Role", "Location", "Salary")
+MATCH_LABEL = {"strong": "★★ Strong", "partial": "★ Partial"}
+MATCH_HELP = {"strong": "a keyword is in the job title",
+              "partial": "part of a keyword is in the title, or a keyword is only in the description"}
 LABEL = {"ready": "✉ Ready", "apply on site": "🌐 Apply on site", "done": "✔ Done", "rejected": "✖ Rejected"}
 DEFAULT_KEYWORDS = bot.DEFAULT_CONFIG["keywords"]
 # (key, label, lowest, highest, what it means). The AI model is picked in the main window.
@@ -463,7 +467,7 @@ class App(tk.Tk):
         self.minsize(px(900), px(600))
         self.jobs, self.by_iid, self.mtime = [], {}, 0
         self.proc, self.out, self.stopped = None, queue.Queue(), False
-        self.sort_col, self.sort_rev = "Posted", False
+        self.sort_col, self.sort_rev = "Match", False
         self.in_table = False
         self.style_widgets()
 
@@ -610,7 +614,7 @@ class App(tk.Tk):
         self.busy_buttons = []
         for text, cmd, tip in [
             ("🔍  Find jobs", self.find_jobs, "Search every job site with the filter below (F5). "
-                                             "Uses no Gemini and no Gmail. Takes 1-3 minutes."),
+                                             "Uses no Gmail, and Gemini only for the Google search. Takes about a minute."),
             ("✉  Auto-draft best matches", self.auto_draft,
              "Find jobs, then let Gemini check the best matches and write a tailored CV + email for each. "
              "Saved as Gmail drafts (or as files when Gmail is not connected). Nothing is sent."),
@@ -772,9 +776,10 @@ class App(tk.Tk):
         c = self.c_filter = Card(self)
         self.kw = tk.StringVar(value=", ".join(cfg.get("keywords") or DEFAULT_KEYWORDS))
         self.excl = tk.StringVar(value=", ".join(cfg.get("exclude_keywords") or []))
-        self.age = tk.StringVar(value=str(cfg.get("max_job_age_days") or 14))
+        self.age = tk.StringVar(value=str(cfg.get("max_job_age_days") or bot.MAX_AGE_DAYS))
         self.pk_only = tk.BooleanVar(value=cfg.get("worldwide_only", cfg.get("pakistan_only", True)))
         self.region = tk.StringVar(value=", ".join(bot.clean_words(cfg.get("my_region_words"))))
+        self.google = tk.BooleanVar(value=cfg.get("search_google", True))
         self.title_only = tk.BooleanVar(value=bool(cfg.get("keywords_in_title")))
         self.preset = tk.StringVar()
         mine = [k.strip().lower() for k in self.kw.get().split(",")]
@@ -818,6 +823,11 @@ class App(tk.Tk):
         Tooltip(w, "Skip jobs with any of these words in the title, e.g.  Senior, Intern, PHP")
         c.label(row, "Max age (days):").pack(side="left")
         ttk.Spinbox(row, from_=1, to=60, textvariable=self.age, width=4).pack(side="left", padx=(4, 12))
+        w = c.check(row, "Search Google too", self.google)
+        w.pack(side="left", padx=(0, 12))
+        Tooltip(w, "Gemini searches Google for posts on LinkedIn, Indeed, Glassdoor and company sites (one request "
+                   "every 4 hours at most). Google only allows this for Gemini keys with billing turned on; on a free "
+                   "key Job Hunter notices, says so once and tries again the next day.")
         b = ttk.Button(row, text="🔍  Save & search", style="Big.TButton", command=self.find_jobs)
         b.pack(side="left")
         Tooltip(b, "Save this filter (Auto-run uses it too) and search now.")
@@ -867,8 +877,8 @@ class App(tk.Tk):
 
         left = tk.Frame(c)
         left.pack(fill="both", expand=True)
-        cols = ("Status", "Posted", "Company", "Role", "Location", "Salary")
-        widths = (115, 65, 120, 240, 130, 100)
+        cols = COLUMNS
+        widths = (110, 95, 65, 120, 240, 130, 100)
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
         for col, w in zip(cols, widths):
             self.tree.heading(col, text=col, command=lambda col=col: self.sort_by(col))
@@ -996,8 +1006,8 @@ class App(tk.Tk):
         status = LABEL.get(j["status"], j["status"])
         if j["status"] in ("done", "rejected") and j.get("why"):
             status = f"{status[:1]} {j['why']}"
-        return (status, ago(j.get("date")), j["company"], j["title"], j["location"][:60],
-                j.get("salary", ""))
+        return (status, MATCH_LABEL.get(j.get("match"), ""), ago(j.get("date")), j["company"], j["title"],
+                j["location"][:60], j.get("salary", ""))
 
     def fill_table(self):
         keep = self.tree.selection()
@@ -1007,9 +1017,11 @@ class App(tk.Tk):
         want, q = VIEWS[self.view.get()], self.search.get().lower().strip()
         rows = [j for j in self.jobs if j["status"] in want and
                 (not q or q in f"{j['title']} {j['company']} {j['location']} {j.get('tags', '')} {j['text']}".lower())]
-        idx = ("Status", "Posted", "Company", "Role", "Location", "Salary").index(self.sort_col)
-        if self.sort_col == "Posted":
+        idx = COLUMNS.index(self.sort_col)
+        if self.sort_col in ("Posted", "Match"):  # newest first; for Match, strong matches before partial ones
             rows.sort(key=lambda j: j.get("date") or "", reverse=not self.sort_rev)
+            if self.sort_col == "Match":
+                rows.sort(key=lambda j: j.get("match") != "strong", reverse=self.sort_rev)
         else:
             rows.sort(key=lambda j: str(self.row_values(j)[idx]).lower(), reverse=self.sort_rev)
         again = None
@@ -1020,18 +1032,30 @@ class App(tk.Tk):
                 again = iid
         matches = sum(j["status"] in (bot.STATUS_READY, bot.STATUS_SITE) for j in self.jobs)
         if self.jobs and not matches and not rows:
-            text = (f"No matches in {len(self.jobs)} jobs. Try a Job type, fewer or other keywords, a longer max age, "
-                    "or untick 'Only open worldwide'. Show 'Everything' to see why each was left out.")
+            text = f"No matches in {len(self.jobs)} jobs."
         else:
             text = (f"{len(rows)} shown  ·  {sum(j['status'] == bot.STATUS_READY for j in self.jobs)} with email, "
                     f"{sum(j['status'] == bot.STATUS_SITE for j in self.jobs)} apply on site, "
                     f"{len(self.jobs)} checked")
+        if self.jobs and matches < 20:
+            text += self.near_misses()
         self.count_lbl.config(text=text, wraplength=round(560 * self.scale), justify="left")
         if again:
             self.tree.selection_set(again)
             self.tree.see(again)
         else:
             self.show_detail()
+
+    def near_misses(self):
+        """What loosening the filter would add: jobs that match your keywords but were left out for age or place."""
+        near = [j for j in self.jobs if j["status"] == bot.STATUS_REJECTED and j.get("match")]
+        old = sum(j["why"] == "too old" for j in near)
+        place = sum(j["why"].startswith(("not open", "location/work-auth")) for j in near)
+        tips = ([f"{old} more are older than {self.age.get()} days (raise Max age)"] if old else []) + \
+               ([f"{place} more are limited to other countries (untick Only open worldwide)"] if place else [])
+        if not tips:
+            return "  ·  Try a Job type, more or shorter keywords, or untick Keywords in title only."
+        return "  ·  " + "; ".join(tips) + "."
 
     def sort_by(self, col):
         self.sort_rev = not self.sort_rev if self.sort_col == col else False
@@ -1056,6 +1080,7 @@ class App(tk.Tk):
         facts = [("Status", LABEL.get(j["status"], j["status"]) + (f"  ({j['why']})" if j.get("why") else "")),
                  ("Posted", (j.get("date") or "")[:10] + (f"  ({ago(j.get('date'))})" if j.get("date") else "")),
                  ("Salary", j.get("salary", "")), ("Type", j.get("job_type", "")), ("Level", j.get("level", "")),
+                 ("Match", MATCH_HELP.get(j.get("match"), "")), ("Note", j.get("note", "")),
                  ("Tags", j.get("tags", "")), ("Email", j.get("email", "")),
                  ("Email found on", j.get("email_src", "")), ("Source", j["source"])]
         for k, v in facts:
@@ -1240,7 +1265,7 @@ class App(tk.Tk):
     def find_jobs(self):
         if self.save_filter():
             self.search.set("")
-            self.run_bot(["--dry-run"], "Searching job sites (takes 1-3 minutes)")
+            self.run_bot(["--dry-run"], "Searching 16 job sources (takes about a minute)")
 
     def ready_for(self, gmail=False):
         """True when the keys and profile a Gemini action needs are there; otherwise opens what is missing.
@@ -1497,7 +1522,7 @@ class App(tk.Tk):
         fields = combine(picked)[1] if picked else ["all"]
         new = dict(keywords=words(self.kw), exclude_keywords=words(self.excl), max_job_age_days=age,
                    worldwide_only=self.pk_only.get(), keywords_in_title=self.title_only.get(), job_fields=fields,
-                   job_types=picked, my_region_words=words(self.region))
+                   job_types=picked, my_region_words=words(self.region), search_google=self.google.get())
         if any(cfg.get(k) != v for k, v in new.items()):
             cfg.update(new)
             cfg.pop("pakistan_only", None)

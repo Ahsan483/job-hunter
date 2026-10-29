@@ -21,8 +21,9 @@
   "job_fields": [
     "software"
   ],
-  "max_job_age_days": 14,
+  "max_job_age_days": 30,
   "max_years_required": 8,
   "worldwide_only": true,
-  "my_region_words": []
+  "my_region_words": [],
+  "search_google": true
 }

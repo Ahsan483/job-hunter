@@ -30,7 +30,7 @@ def posting(n, **kw):
     return {"source": "remotive", "id": f"remotive-{n}", "title": f"Backend Engineer {n}", "company": f"Co{n}",
             "url": f"https://example.com/{n}", "location": "Worldwide",
             "text": f"Remote, worldwide. C# and REST APIs. Email your CV to jobs@co{n}.example.",
-            "date": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1), **kw}
+            "date": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=n), **kw}  # job 1 is the newest
 
 
 class Sandbox(unittest.TestCase):
@@ -340,6 +340,13 @@ class GeminiFallback(unittest.TestCase):
         with patch, self.assertRaisesRegex(RuntimeError, "every free model is out of quota"):
             bot.gemini(self.cfg, "hi")
         self.assertEqual(len(calls), 3)  # the second call asked nobody
+
+    def test_search_quota_does_not_block_the_model_for_cvs(self):
+        calls, patch = self.reply({"gemini-flash-latest": 429, "gemini-2.5-flash": {"ok": 1}})
+        with patch, self.assertRaisesRegex(RuntimeError, bot.NO_SEARCH):
+            bot.gemini(self.cfg, "find jobs", search=True)
+        self.assertEqual(bot.gemini_state().get("blocked", {}), {})  # still free for tailoring CVs
+        self.assertEqual(calls, ["gemini-flash-latest"])              # and no hunt through every model
 
     def test_files_never_go_to_gemma(self):
         calls, patch = self.reply({"gemini-flash-latest": 404, "gemini-2.5-flash": 500, "gemma-3-27b-it": {"x": 1}})

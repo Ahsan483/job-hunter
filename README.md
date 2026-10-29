@@ -1,6 +1,6 @@
 # Job Hunter: Free AI Remote Job Search Bot (Python, Gemini, Gmail Drafts)
 
-**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 8 remote job boards at once, filters by your keywords, job age and region ("only open to Pakistan / worldwide"), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
+**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 16 job sources at once (plus Google, for LinkedIn and Indeed posts), filters by your keywords, job age and region ("only open to Pakistan / worldwide"), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
 
 [![Download for Windows](https://img.shields.io/badge/download-JobHunterSetup.exe-2563eb.svg)](https://github.com/Ahsan483/job-hunter/releases/latest/download/JobHunterSetup.exe)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -17,9 +17,10 @@ Good for developers and freelancers looking for **remote jobs from Pakistan, Ind
 
 ## Features
 
-- **Searches 8 job sources at once:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the Hacker News "Who is hiring?" thread.
+- **Searches 16 job sources at once:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads, The Muse, Remote First Jobs, Real Work From Anywhere, 4 Day Week, Workew, the Hacker News "Who is hiring?" thread, and the career pages of 28 remote-first companies (GitLab, Stripe, Mozilla, Supabase, 1Password and more).
+- **Google search too:** Gemini searches Google for posts on LinkedIn, Indeed, Glassdoor and company sites. Only links Google really returned are kept. One Gemini request every 4 hours at most.
 - **Any kind of remote job:** pick a job type (Finance / Accounting, Sales, SEO / Marketing, Customer support, Design, Writing, Data, HR, Virtual assistant, Project management, Software) or type your own keywords.
-- **Smart filter:** your keywords, max post age, max years of experience, and "only open worldwide / to my region".
+- **Smart, forgiving filter:** "fullstack", "full stack" and "Full-Stack" are the same; small typos are fine; a job that matches part of your keywords is shown as a **partial match** under the strong ones. Posts that don't say where they hire are kept and marked. When results are few, the window says what to loosen ("15 more are older than 10 days").
 - **Finds the application email** in the post, or on the company's own careers page.
 - **Tailored CV + cover letter (PDF)** for each job, built only from facts in your profile. The bot drops any line that adds a skill or number you don't have.
 - **Gmail drafts** with the CV attached, ready for you to review and send. Gmail is optional: without it you get the CV, cover letter and email text as files.
@@ -132,10 +133,11 @@ Set these in the **Job filter** bar (then press **Save & search**) or in `config
 | Setting | Meaning | Example |
 |---|---|---|
 | Job type | Fills in keywords that suit a field and picks the matching We Work Remotely categories. Pick **Custom** to type your own (then every category is read) | `Finance / Accounting` |
-| Keywords (`keywords`) | A job is kept if **any** of these appears in it | `React, Node.js` or `Accountant, Bookkeeper` |
+| Keywords (`keywords`) | A job is kept if **any** of these is in it. In the title it is a **strong** match; part of it in the title, or the keyword only in the description, is a **partial** match | `React, Node.js` or `Accountant, Bookkeeper` |
 | Keywords in title only (`keywords_in_title`) | The keyword must be in the job title, not just the description. Turn it on for words like *Sales* or *Finance* that appear in almost every job ad | on |
 | Exclude in title (`exclude_keywords`) | Skip jobs with these words in the title | `Intern, PHP` |
-| Max age (`max_job_age_days`) | Ignore older posts | `14` |
+| Max age (`max_job_age_days`) | Ignore older posts | `30` |
+| Search Google too (`search_google`) | Gemini searches Google for LinkedIn, Indeed, Glassdoor and company-site posts (one request every 4 hours at most) | on |
 | Only open worldwide / to my region (`worldwide_only`) | On: only jobs that hire worldwide or in your region. Off: any remote job | on |
 | My country/region (`my_region_words`) | Your country/region. Posts naming these count as open to you | `Pakistan, South Asia` |
 | Skip jobs asking for (years) (`max_years_required`, in Settings) | Skip jobs asking for this many years or more (`0` = off) | `8` |
@@ -180,7 +182,7 @@ python -I -m unittest discover -s tests   # run the tests (no network needed)
 | Gmail login fails | Use the 16-letter **app password**, not your normal password, and check that IMAP is on. |
 | "every free model is out of quota" | Gemini's free limit is used up. The log says when it's back, usually within a day. |
 | "model was not found" in `runs.log` | Set `gemini_model` to a current name from https://ai.google.dev/gemini-api/docs/models. |
-| No jobs found | Add more keywords, raise the max age, or turn off "Only open worldwide / to my region". For non-software jobs, pick a **Job type** so the right job categories are searched. Pick **Show: Everything** to see why each job was left out. |
+| No jobs found | Read the line above the job list: it says how many more jobs a longer max age or any country would give. Add more keywords, raise the max age, or turn off "Only open worldwide / to my region". For non-software jobs, pick a **Job type** so the right job categories are searched. Pick **Show: Everything** to see why each job was left out. |
 
 ## Files
 
@@ -200,9 +202,9 @@ The installed app keeps the files that are not uploaded in `%APPDATA%\Job Hunter
 
 ## Job sources and credits
 
-Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com) and [Hacker News](https://news.ycombinator.com). Every job links back to its original post. Please apply through those links and support these sites.
+Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com), [The Muse](https://www.themuse.com), [Remote First Jobs](https://remotefirstjobs.com), [Real Work From Anywhere](https://www.realworkfromanywhere.com), [4 Day Week](https://4dayweek.io), [Workew](https://workew.com), [Hacker News](https://news.ycombinator.com), the public job APIs of company career pages on Greenhouse, Ashby and Lever, and Google search through Gemini. Every job links back to its original post. Please apply through those links and support these sites.
 
-To stay polite, the bot pauses between requests to the same site, backs off when a site says it's busy, checks robots.txt before reading company career pages, and fetches Remotive at most every 6 hours, as its API terms ask.
+Job Hunter does not scrape LinkedIn, Indeed or Google directly: their terms and robots.txt forbid it and they block bots. It finds their posts through Gemini's Google Search instead. To stay polite, the bot only reads sites that allow it, pauses between requests to the same site, backs off when a site says it's busy, checks robots.txt before reading company career pages, and fetches Remotive at most every 6 hours, as its API terms ask.
 
 ## FAQ
 
@@ -222,7 +224,7 @@ No. It only creates Gmail **drafts**. You read each one and press Send.
 Gemini is told to use only facts from your `profile.json`, and the bot drops reworded lines that add tools or numbers your profile does not contain. Always read the result before you send it.
 
 **Which job sites does it search?**
-Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads and the Hacker News "Who is hiring?" thread.
+Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads, The Muse, Remote First Jobs, Real Work From Anywhere, 4 Day Week, Workew, the Hacker News "Who is hiring?" thread, and the career pages of 28 remote-first companies (GitLab, Stripe, Mozilla, Supabase, 1Password and more). With **Search Google too** on, Gemini also finds posts on LinkedIn, Indeed, Glassdoor and company sites.
 
 **Does it work on Mac or Linux?**
 Currently it targets Windows 10/11 (the GUI, the scheduled task and the Edge PDF export are Windows-specific). Pull requests for other systems are welcome.

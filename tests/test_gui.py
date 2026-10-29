@@ -87,6 +87,15 @@ class Window(unittest.TestCase):
         self.app.load_jobs()
         self.assertIn("No matches in 1 jobs", self.app.count_lbl.cget("text"))
 
+    def test_few_matches_say_what_to_loosen(self):
+        old = dict(JOBS[2], why="too old", match="strong")
+        far = dict(JOBS[2], id="d-4", why="not open worldwide/to my region", match="partial")
+        self.write("jobs.json", {"updated": "x", "jobs": [old, far]})
+        self.app.load_jobs()
+        text = self.app.count_lbl.cget("text")
+        self.assertIn("1 more are older than", text)
+        self.assertIn("1 more are limited to other countries", text)
+
     def test_buttons_follow_the_job(self):
         self.pick("a-1")
         self.assertEqual(self.enabled("b_draft", "b_cv", "b_open", "b_copy", "b_applied", "b_skip", "b_files"),

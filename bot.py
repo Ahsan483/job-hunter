@@ -53,16 +53,18 @@ HERE = os.environ.get("JOBHUNTER_HOME") or (
     else os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(HERE, exist_ok=True)
 CODE = os.path.dirname(os.path.abspath(__file__))  # bot.py and cv.py
-VERSION = "1.2.0"  # installer/build.ps1 checks that the release tag matches
+VERSION = "1.3.0"  # installer/build.ps1 checks that the release tag matches
 REPO = "Ahsan483/job-hunter"
 UA = {"User-Agent": f"Mozilla/5.0 (compatible; JobHunter/{VERSION}; +https://github.com/{REPO})"}
 MIN_GAP = 1.5  # seconds between two requests to the same site
+# Job APIs made for programs to read (company career pages) take requests faster than websites do.
+API_GAP = {"boards-api.greenhouse.io": 0.3, "api.ashbyhq.com": 0.3, "api.lever.co": 0.3}
 REMOTIVE_CACHE = os.path.join(HERE, "remotive_cache.json")
 REMOTIVE_TTL = 6 * 3600  # Remotive asks for at most 4 fetches a day
 TRACKER = os.path.join(HERE, "tracker.csv")
 RUNS_LOG = os.path.join(HERE, "runs.log")
 LOCK = os.path.join(HERE, "bot.lock")
-MAX_AGE_DAYS = 14
+MAX_AGE_DAYS = 30
 
 DEFAULT_CONFIG = {
     "gmail_address": "",
@@ -89,6 +91,9 @@ DEFAULT_CONFIG = {
     "worldwide_only": True,
     # Your country/region, e.g. ["Pakistan", "South Asia"]. Jobs naming one of these count as open to you.
     "my_region_words": [],
+    # Also ask Gemini to search Google (finds posts on LinkedIn, Indeed, Glassdoor, company sites). One Gemini
+    # request every few hours; needs a Gemini key.
+    "search_google": True,
 }
 
 
@@ -136,6 +141,18 @@ ALIASES = [("seo", "search engine optimization", "search engine optimisation"),
 # (recruiter, recruiting, recruitment), but the bare stem is not ("marketing" is not "markets").
 JOB_ENDING = "ments?|ings?|ers?|ors?|ists?|ants?|ions?"
 TOKEN = re.compile(r"[a-z0-9][a-z0-9.#+]*[a-z0-9#+]|[a-z0-9]|\.net|&", re.I)
+# Words written together or apart: "Full-Stack", "full stack" and "fullstack" are one word for matching.
+COMPOUNDS = re.compile(r"\b(full|front|back|dev|e|cyber|data|word|web|copy|book|on|sales|java|type|white|sys|net)"
+                       r"[\s-]+(stack|end|ops|commerce|security|base|press|site|flow|writ\w*|keep\w*|board\w*|"
+                       r"force|script|label|admin|work\w*)\b", re.I)
+# Words that only say what kind of job it is: "React Developer" partly matches "Frontend Engineer (React)",
+# but "developer" alone is not a reason to show a job.
+ROLE_WORDS = {"developer", "engineer", "programmer", "designer", "writer", "assistant", "agent", "representative",
+              "rep", "administrator", "admin", "technician", "architect", "operator", "staff", "worker", "member"}
+
+
+def joined(text):
+    return COMPOUNDS.sub(lambda m: m.group(1) + m.group(2), text)
 
 
 def stem(w):
@@ -178,19 +195,30 @@ class Keyword:
     """One keyword, matched loosely against job titles and exactly against job text."""
 
     def __init__(self, keyword):
-        self.keyword, self.words = keyword, job_words(keyword)
+        self.keyword, self.words = keyword, job_words(joined(keyword))
         phrase = " ".join(self.words)
         self.aliases = next((list(a) for a in ALIASES if phrase in a), [phrase])
         self.alias_res = [word_re([a]) for a in self.aliases]
         self.parts = [(w, re.compile(word_pattern(w), re.I)) for w in self.words]
-        self.exact = word_re([keyword])  # job text names skills in passing, so it must say the keyword itself
+        self.exact = word_re([joined(keyword)])  # job text names skills in passing: it must say the keyword itself
+        # Words of a several-word keyword that say what the job is about, for partial matches.
+        self.specific = [(w, rx) for w, rx in self.parts if len(self.parts) > 1 and w not in ROLE_WORDS
+                         and w not in NOISE and w not in TOO_BROAD and not near(w, RANK)]
+        self.squashed = "".join(self.words) if all(w.isalpha() for w in self.words) else ""
 
     def in_title(self, title):
+        """title: already passed through joined()."""
         if any(r.search(title) for r in self.alias_res):
             return True
-        tokens = [t.lower() for t in TOKEN.findall(title)]
-        return all(rx.search(title) or (len(w) >= 5 and near(w, [t for t in tokens if t.isalpha()]))
-                   for w, rx in self.parts)
+        words = [t.lower() for t in TOKEN.findall(title) if t.isalpha()]
+        if all(rx.search(title) or (len(w) >= 5 and near(w, words)) for w, rx in self.parts):
+            return True
+        # Other compounds written apart in the title: "WordPress" ~ "Word Press", "Salesforce" ~ "Sales Force".
+        pairs = {a + b for a, b in zip(words, words[1:])}
+        return len(self.squashed) >= 6 and (self.squashed in pairs or near(self.squashed, pairs))
+
+    def partly_in_title(self, title):
+        return any(rx.search(title) for _, rx in self.specific)
 
     def in_text(self, text):
         return bool(self.exact and self.exact.search(text))
@@ -199,12 +227,28 @@ class Keyword:
         return self.aliases[0]  # what goes into the job sites' search boxes: "seo", not "seo expert"
 
 
+STRONG, PARTIAL = 2, 1  # how well a job matches: a keyword in the title, or only part of one / only in the text
+
+
 class Matcher:
     def __init__(self, keywords):
         self.keywords = [Keyword(k) for k in keywords]
 
+    def score(self, title, text=None):
+        """STRONG, PARTIAL or 0. text=None: the title alone counts (Keywords in title only)."""
+        title = joined(title)
+        if any(k.in_title(title) for k in self.keywords):
+            return STRONG
+        if any(k.partly_in_title(title) for k in self.keywords):
+            return PARTIAL
+        if text is not None:
+            text = joined(text)
+            if any(k.in_text(text) for k in self.keywords):
+                return PARTIAL
+        return 0
+
     def __call__(self, title, text=None):
-        return any(k.in_title(title) or (text is not None and k.in_text(text)) for k in self.keywords)
+        return self.score(title, text) == STRONG or bool(text is not None and self.score(title, text))
 
     def explain(self):
         """How the keywords are read, for the run log, only where that differs from what was typed."""
@@ -238,8 +282,12 @@ WWR_FEEDS = {
 FIELDS = DEFAULT_CONFIG["job_fields"]
 
 
+GOOGLE = None  # the config, when src_google may ask Gemini to search Google
+
+
 def apply_filters(cfg):
-    global MATCH, TITLE_ONLY, EXCLUDE, SEARCH, MAX_AGE_DAYS, WORLDWIDE_ONLY, REGION, MAX_YEARS, FIELDS
+    global MATCH, TITLE_ONLY, EXCLUDE, SEARCH, MAX_AGE_DAYS, WORLDWIDE_ONLY, REGION, MAX_YEARS, FIELDS, GOOGLE
+    GOOGLE = cfg if cfg.get("search_google", True) and is_set(str(cfg.get("gemini_api_key") or "")) else None
     kws = clean_words(cfg.get("keywords")) or DEFAULT_CONFIG["keywords"]
     MATCH = Matcher(kws)
     SEARCH = list(dict.fromkeys(k.search_term() for k in MATCH.keywords))[:10]
@@ -300,7 +348,7 @@ def fetch(url, as_json=False, timeout=30, tries=3):
     host = urllib.parse.urlparse(url).netloc
     for attempt in range(tries):
         with _hit_lock:  # book the next free slot for this site, then wait for it outside the lock
-            slot = max(time.time(), _last_hit.get(host, 0) + MIN_GAP)
+            slot = max(time.time(), _last_hit.get(host, 0) + API_GAP.get(host, MIN_GAP))
             _last_hit[host] = slot
         if slot > time.time():
             time.sleep(slot - time.time())
@@ -427,15 +475,18 @@ def src_remoteok():
 
 
 def src_arbeitnow():
-    d = fetch("https://www.arbeitnow.com/api/job-board-api", as_json=True)
     out = []
-    for j in d.get("data", []):
-        if not j.get("remote"):
-            continue
-        out.append(dict(source="arbeitnow", id=f"arbeitnow-{j['slug']}", title=j["title"], company=j["company_name"],
-                        url=j["url"], location=j.get("location", ""), text=text_of(j.get("description")),
-                        date=parse_date(j.get("created_at")), job_type=", ".join(j.get("job_types", [])),
-                        tags=", ".join(j.get("tags", []))))
+    for page in (1, 2, 3):
+        d = fetch(f"https://www.arbeitnow.com/api/job-board-api?page={page}", as_json=True)
+        for j in d.get("data", []):
+            if not j.get("remote"):
+                continue
+            out.append(dict(source="arbeitnow", id=f"arbeitnow-{j['slug']}", title=j["title"],
+                            company=j["company_name"], url=j["url"], location=j.get("location", ""),
+                            text=text_of(j.get("description")), date=parse_date(j.get("created_at")),
+                            job_type=", ".join(j.get("job_types", [])), tags=", ".join(j.get("tags", []))))
+        if not (d.get("links") or {}).get("next"):
+            break
     return out
 
 
@@ -483,19 +534,233 @@ def src_jobicy():
     return out
 
 
+def rss_items(url):
+    """Each <item> of an RSS feed as {tag: text}, with CDATA unwrapped and entities decoded."""
+    out = []
+    for item in re.findall(r"(?s)<item>(.*?)</item>", fetch(url)):
+        d = {}
+        for tag, body in re.findall(r"(?s)<([\w:]+)[^>]*>(.*?)</\1>", item):
+            d.setdefault(tag, html.unescape(re.sub(r"(?s)<!\[CDATA\[(.*?)\]\]>", r"\1", body)).strip())
+        out.append(d)
+    return out
+
+
+def last_part(url):
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
 def src_weworkremotely():
     out = []
     feeds = dict.fromkeys(c for f in (WWR_FEEDS if "all" in FIELDS else FIELDS) for c in WWR_FEEDS[f])
     for cat in feeds:
-        feed = fetch(f"https://weworkremotely.com/categories/{cat}.rss")
-        for item in re.findall(r"(?s)<item>(.*?)</item>", feed):
-            tag = lambda t: html.unescape((re.search(rf"(?s)<{t}>(.*?)</{t}>", item) or [None, ""])[1]).strip()
-            company, _, title = tag("title").partition(": ")
-            link = tag("link") or tag("guid")
-            out.append(dict(source="weworkremotely", id=f"wwr-{link.rstrip('/').rsplit('/', 1)[-1]}",
-                            title=title or company, company=company if title else "", url=link,
-                            location=tag("region") or "Remote", text=text_of(tag("description")),
-                            date=parse_date(tag("pubDate")), job_type=tag("type"), tags=tag("skills")))
+        for it in rss_items(f"https://weworkremotely.com/categories/{cat}.rss"):
+            company, _, title = it.get("title", "").partition(": ")
+            link = it.get("link") or it.get("guid", "")
+            out.append(dict(source="weworkremotely", id=f"wwr-{last_part(link)}", title=title or company,
+                            company=company if title else "", url=link, location=it.get("region") or "Remote",
+                            text=text_of(it.get("description")), date=parse_date(it.get("pubDate")),
+                            job_type=it.get("type", ""), tags=it.get("skills", "")))
+    return out
+
+
+def title_at_company(s):
+    """'Data Analyst at Acme' -> ('Data Analyst', 'Acme')."""
+    title, at, company = s.rpartition(" at ")
+    return (title, company) if at else (s, "")
+
+
+def src_remotefirstjobs():
+    out = []
+    for it in rss_items("https://remotefirstjobs.com/rss/jobs.rss"):
+        title, company = title_at_company(it.get("title", ""))
+        out.append(dict(source="remotefirstjobs", id=f"rfj-{last_part(it.get('link', ''))}", title=title,
+                        company=company, url=it.get("link", ""), location="Remote",
+                        text=text_of(it.get("description")), date=parse_date(it.get("pubDate"))))
+    return out
+
+
+def src_realworkfromanywhere():
+    """Only jobs you can do from any country, as the site's name says."""
+    out = []
+    for it in rss_items("https://www.realworkfromanywhere.com/rss.xml"):
+        title, company = title_at_company(it.get("title", ""))
+        out.append(dict(source="realworkfromanywhere", id=f"rwfa-{last_part(it.get('link', ''))}", title=title,
+                        company=company, url=it.get("link", ""), location="Anywhere",
+                        text=text_of(it.get("description")), date=parse_date(it.get("pubDate"))))
+    return out
+
+
+def src_workew():
+    out = []
+    for it in rss_items("https://workew.com/feed/?post_type=job_listing"):
+        link = it.get("link", "")
+        # The link ends in <title>-<company>: https://workew.com/job/it-support-specialist-6sense/
+        company = last_part(link).removeprefix(slug(it.get("title")) + "-").replace("-", " ").title()
+        out.append(dict(source="workew", id=f"workew-{last_part(link)}", title=it.get("title", ""),
+                        company=company, url=link, location="Remote",
+                        text=text_of(it.get("description")).split("The post ")[0],
+                        date=parse_date(it.get("pubDate"))))
+    return out
+
+
+def src_jobicy_feed():
+    """Jobicy's feed of every new job; the API (src_jobicy) adds older ones by keyword."""
+    out = []
+    for it in rss_items("https://jobicy.com/feed/job_feed"):
+        out.append(dict(source="jobicy", id=f"jobicy-{it.get('id') or last_part(it.get('link', ''))}",
+                        title=it.get("title", ""), company=it.get("job_listing:company", ""), url=it.get("link", ""),
+                        location=it.get("job_listing:location") or "Anywhere",
+                        text=text_of(it.get("content:encoded") or it.get("description")),
+                        date=parse_date(it.get("pubDate")), job_type=it.get("job_listing:job_type", ""),
+                        salary=money(it.get("job_listing:salary_min"), it.get("job_listing:salary_max"),
+                                     it.get("job_listing:salary_currency"), it.get("job_listing:salary_period")),
+                        geo_strict=True))
+    return out
+
+
+def src_themuse():
+    out = []
+    for page in range(5):
+        d = fetch("https://www.themuse.com/api/public/jobs?location=Flexible%20%2F%20Remote&descending=true"
+                  f"&page={page}", as_json=True)
+        for j in d.get("results", []):
+            out.append(dict(source="themuse", id=f"themuse-{j['id']}", title=j.get("name", "").strip(),
+                            company=(j.get("company") or {}).get("name", ""),
+                            url=(j.get("refs") or {}).get("landing_page", ""),
+                            location=", ".join(x["name"] for x in j.get("locations") or []) or "Remote",
+                            text=text_of(j.get("contents")), date=parse_date(j.get("publication_date")),
+                            level=", ".join(x["name"] for x in j.get("levels") or [])))
+        if page + 1 >= d.get("page_count", 0):
+            break
+    return out
+
+
+def src_4dayweek():
+    out = []
+    for page in (1, 2, 3):
+        d = fetch(f"https://4dayweek.io/api?page={page}", as_json=True)
+        for j in d.get("jobs", []):
+            if str(j.get("is_remote")).lower() != "true":
+                continue
+            out.append(dict(source="4dayweek", id=f"4dayweek-{j.get('id_str') or j.get('slug')}",
+                            title=j.get("title", ""), company=j.get("company_name", ""), url=j.get("url", ""),
+                            location=j.get("location_original") or j.get("location_country") or "Remote",
+                            text=text_of(j.get("description")), date=parse_date(j.get("posted")),
+                            level=j.get("level", ""), tags=j.get("category", "")))
+        if not d.get("has_more"):
+            break
+    return out
+
+
+# Remote-first companies whose career pages run on Greenhouse, Ashby or Lever: these have public job APIs.
+BOARDS = [("greenhouse", s) for s in ("gitlab", "grafanalabs", "mozilla", "wikimedia", "twilio", "reddit", "coinbase",
+                                      "stripe", "pinterest", "dropbox", "automatticcareers", "datadog", "discord",
+                                      "sourcegraph91", "airtable", "vercel")] + \
+         [("ashby", s) for s in ("supabase", "vanta", "1password", "posthog", "ramp", "zapier", "linear", "sentry",
+                                 "replit")] + \
+         [("lever", s) for s in ("binance", "anchorage", "toptal")]
+
+
+def board_jobs(ats, name):
+    """One company's open jobs. Greenhouse lists titles only, so its texts are read for matching titles only."""
+    if ats == "greenhouse":
+        base = f"https://boards-api.greenhouse.io/v1/boards/{name}/jobs"
+        out, reads = [], 0
+        for j in fetch(base, as_json=True).get("jobs", []):
+            job = dict(source="greenhouse", id=f"greenhouse-{j['id']}", title=j.get("title", ""),
+                       company=j.get("company_name") or name, url=j.get("absolute_url", ""),
+                       location=(j.get("location") or {}).get("name", ""), text="",
+                       date=parse_date(j.get("first_published") or j.get("updated_at")), any_job=True)
+            remote = REMOTE_OK_LOC.search(job["location"])
+            if remote and reads < 15 and MATCH.score(job["title"]):  # 15 a company keeps a search quick
+                reads += 1
+                job["text"] = text_of(html.unescape(fetch(f"{base}/{j['id']}", as_json=True).get("content", "")))
+            out.append(job)
+        return out
+    if ats == "ashby":
+        d = fetch(f"https://api.ashbyhq.com/posting-api/job-board/{name}", as_json=True)
+        return [dict(source="ashby", id=f"ashby-{j['id']}", title=j.get("title", ""), company=name.title(),
+                     url=j.get("jobUrl", ""), location=", ".join(filter(None, [
+                         j.get("location"), "Remote" if j.get("isRemote") or j.get("workplaceType") == "Remote" else ""])),
+                     text=j.get("descriptionPlain", ""), date=parse_date(j.get("publishedAt")),
+                     job_type=j.get("employmentType", ""), any_job=True) for j in d.get("jobs", [])]
+    d = fetch(f"https://api.lever.co/v0/postings/{name}?mode=json", as_json=True)
+    return [dict(source="lever", id=f"lever-{j['id']}", title=j.get("text", ""), company=name.title(),
+                 url=j.get("hostedUrl", ""), location=", ".join(filter(None, [
+                     (j.get("categories") or {}).get("location"),
+                     "Remote" if j.get("workplaceType") == "remote" else ""])),
+                 text=f"{j.get('descriptionPlain', '')}\n{j.get('additionalPlain', '')}",
+                 date=parse_date(j.get("createdAt")), job_type=(j.get("categories") or {}).get("commitment", ""),
+                 any_job=True) for j in d]
+
+
+GOOGLE_CACHE = os.path.join(HERE, "google_cache.json")
+GOOGLE_TTL = 4 * 3600  # Auto-run every 30 minutes must not use up the free Gemini quota
+GOOGLE_PROMPT = """Use Google Search to find up to 30 real job postings published in the last {days} days for any of
+these: {terms}. Only remote jobs{where}. Search LinkedIn, Indeed, Glassdoor, Wellfound, company career pages and other
+job sites. Only include postings you actually found in the search results, each with the posting's own URL.
+Return ONLY JSON:
+{{"jobs": [{{"title": "", "company": "", "url": "", "location": "as the posting says", "posted": "YYYY-MM-DD or \\"\\"",
+  "description": "3-5 sentences from the posting: the work, the requirements and how to apply (keep any email address)"}}]}}"""
+
+
+def src_google():
+    """Postings on sites with no public feed (LinkedIn, Indeed, Glassdoor, company sites), found by Gemini with Google
+    Search. A posting is kept only if its site is among the pages Google returned, so no made-up links get in."""
+    if not GOOGLE:
+        return []
+    where = f", open to people in {', '.join(clean_words(GOOGLE.get('my_region_words')))} or worldwide" \
+        if WORLDWIDE_ONLY and clean_words(GOOGLE.get("my_region_words")) else \
+        ", open worldwide" if WORLDWIDE_ONLY else ""
+    prompt = GOOGLE_PROMPT.format(days=MAX_AGE_DAYS, terms=", ".join(SEARCH), where=where)
+    ask = key_id(prompt)
+    try:
+        with open(GOOGLE_CACHE, encoding="utf-8") as f:
+            cached = json.load(f)
+    except (OSError, ValueError):
+        cached = {}
+    if cached.get("ask") == ask and time.time() - cached.get("at", 0) < GOOGLE_TTL:
+        found = cached.get("jobs", [])
+    elif cached.get("refused_until", 0) > time.time():
+        return []  # this key has no Google Search quota: asked again once a day, not every run
+    else:
+        try:
+            res = gemini(GOOGLE, prompt, search=True)
+        except RuntimeError as e:
+            if NO_SEARCH not in str(e):
+                raise
+            log(f"  {NO_SEARCH} (Google wants billing turned on for it). The other job sites were searched as usual; "
+                "Job Hunter tries Google again tomorrow. Untick Search Google too to stop trying.")
+            with open(GOOGLE_CACHE, "w", encoding="utf-8") as f:
+                json.dump({"refused_until": time.time() + 86400}, f)
+            return []
+        sites = {s.lower().removeprefix("www.") for s in res.get("_sites", []) if s}
+        found = []
+        for j in res.get("jobs") or []:
+            if not isinstance(j, dict) or not str(j.get("url", "")).startswith("http"):
+                continue
+            host = urllib.parse.urlparse(j["url"]).netloc.lower().removeprefix("www.")
+            if any(host == s or host.endswith("." + s) or s.endswith("." + host) for s in sites):
+                found.append(j)
+        log(f"  Google: {len(found)} postings found ({len(res.get('jobs') or []) - len(found)} without a checked link "
+            "left out)")
+        with open(GOOGLE_CACHE + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"ask": ask, "at": time.time(), "jobs": found}, f)
+        os.replace(GOOGLE_CACHE + ".tmp", GOOGLE_CACHE)
+    now = dt.datetime.now(dt.timezone.utc)
+    return [dict(source="google", id=f"google-{key_id(j['url'])}", title=str(j.get("title", "")),
+                 company=str(j.get("company", "")), url=j["url"], location=str(j.get("location") or "Remote"),
+                 text=str(j.get("description", "")), date=parse_date(j.get("posted")) or now) for j in found]
+
+
+def src_companies():
+    out = []
+    with ThreadPoolExecutor(max_workers=3) as pool:  # one per job system; fetch() spaces requests to each
+        for f in as_completed([pool.submit(board_jobs, ats, name) for ats, name in BOARDS]):
+            try:
+                out += f.result()
+            except Exception as e:  # one company's page moving must not lose the others
+                log(f"  a company career page failed ({e.__class__.__name__}), skipped")
     return out
 
 
@@ -532,14 +797,21 @@ def src_hn():
     return out
 
 
-SOURCES = [src_remotive, src_remoteok, src_arbeitnow, src_himalayas, src_jobicy, src_weworkremotely,
-           src_workingnomads, src_hn]
+SOURCES = [src_remotive, src_remoteok, src_arbeitnow, src_himalayas, src_jobicy, src_jobicy_feed, src_weworkremotely,
+           src_workingnomads, src_hn, src_themuse, src_remotefirstjobs, src_realworkfromanywhere, src_workew,
+           src_4dayweek, src_companies, src_google]
 
 
 # ---------- filtering ----------
 
+# HN's location line: "Remote (US)" or "REMOTE - Europe" says where remote means.
+REMOTE_SOMEWHERE = re.compile(r"remote\W{0,4}(us|usa|u\.s\.?|united states|canada|uk|europe|eu|north america|americas"
+                              r"|latam|germany|india)\b", re.I)
+
+
 def open_to_me(job):
-    """True only if the post says it hires worldwide or in my_region_words; unclear posts count as no."""
+    """True if the post says it hires worldwide or in my_region_words, False if it names somewhere else,
+    None if it does not say (many posts just say "Remote": those are kept, marked "location not stated")."""
     if OPEN_GEO.search(job["location"]) or (REGION and REGION.search(job["location"])):
         return True
     # Himalayas and Jobicy list the allowed countries; trust that list over words in the text.
@@ -548,30 +820,39 @@ def open_to_me(job):
     # A location like "USA" or "Berlin" names somewhere else. HN's "location" is the whole first line.
     if job["source"] != "hn" and GENERIC_LOC.sub("", job["location"]):
         return False
+    if job["source"] == "hn" and REMOTE_SOMEWHERE.search(job["location"]):
+        return False
     head = job["text"][:6000]
-    return bool(OPEN_TEXT.search(head) or (REGION and REGION.search(head)))
+    return True if OPEN_TEXT.search(head) or (REGION and REGION.search(head)) else None
 
 
 def prefilter(job, now):
+    """Why a job is left out, or None. Sets job["match"] ("strong" / "partial") and job["note"]."""
     blob = f"{job['title']}\n{job['location']}\n{job['text']}"
-    if not MATCH(job["title"], None if TITLE_ONLY else job["text"][:4000]):
+    score = MATCH.score(job["title"], None if TITLE_ONLY else job["text"][:4000])
+    if not score:
         return "no keyword match"
+    job["match"] = "strong" if score == STRONG else "partial"
     if EXCLUDE and EXCLUDE.search(job["title"]):
         return "excluded word in title"
     if not job["date"]:
         return "no post date"
     if (now - job["date"]).days > MAX_AGE_DAYS:
         return "too old"
-    # Every other source lists remote jobs only (Arbeitnow is filtered on its own remote flag), so a location
-    # like "Philippines" there still means remote. HN posts are any kind of job and must say so.
+    # Job boards list remote jobs only (Arbeitnow is filtered on its own remote flag), so a location like
+    # "Philippines" there still means remote. HN posts and company career pages list every kind of job.
     where = job["location"] + " " + job["text"][:3000]
-    if job["source"] == "hn" and not (REMOTE_OK_LOC.search(where) or (REGION and REGION.search(where))):
+    if (job["source"] == "hn" or job.get("any_job")) and not (REMOTE_OK_LOC.search(where)
+                                                             or (REGION and REGION.search(where))):
         return "not remote"
     if WORLDWIDE_ONLY:
         if BLOCK_LOC.search(blob):
             return "location/work-auth restricted"
-        if not open_to_me(job):
+        open_ = open_to_me(job)
+        if open_ is False:
             return "not open worldwide/to my region"
+        if open_ is None:
+            job["note"] = "location not stated: check the post hires in your country"
     head = job["location"] if job["source"] == "hn" else job["location"] + " " + job["title"]
     if ONSITE.search(head) and not re.search(r"remote", head, re.I):
         return "onsite/hybrid"
@@ -727,6 +1008,7 @@ GEMINI_STATE = os.path.join(HERE, "gemini_state.json")  # model list + which mod
 NOT_TEXT_MODEL = re.compile(r"(tts|image|banana|live|audio|transcribe|robotics|computer-use|embedding|antigravity"
                             r"|deep-research|lyria|omni|customtools|argon|aqa)", re.I)
 NO_MODEL = "No Gemini model is available"
+NO_SEARCH = "Google Search is not in your Gemini key's free quota"
 
 
 def gemini_state():
@@ -816,9 +1098,10 @@ def quota_wait(err):
     return wait, owner
 
 
-def gemini(cfg, prompt, attach=None):
+def gemini(cfg, prompt, attach=None, search=False):
     """Ask Gemini for a JSON answer. When a model is out of free quota, switches to the next free one
-    and remembers until when that model is blocked. attach: optional (mime type, bytes), e.g. a PDF."""
+    and remembers until when that model is blocked. attach: optional (mime type, bytes), e.g. a PDF.
+    search: let Gemini use Google Search; the answer then gets "_sites", the sites Google returned."""
     parts = [{"text": prompt}]
     if attach:
         parts.append({"inline_data": {"mime_type": attach[0], "data": base64.b64encode(attach[1]).decode()}})
@@ -828,28 +1111,35 @@ def gemini(cfg, prompt, attach=None):
     blocked, why = state.setdefault("blocked", {}), state.setdefault("why", {})
     usage = state.setdefault("usage", {})
     models = gemini_models(cfg, state)
-    if attach:  # Gemma cannot read files (a PDF CV gets error 500), so only Gemini models are asked
+    if attach or search:  # Gemma cannot read files (a PDF CV gets error 500) or use Google Search
         models = [m for m in models if not m.startswith("gemma")] or models
     last, tried, back_at = "no response", 0, []
     for model in models:
         if blocked.get(model, 0) > time.time():
             back_at.append(blocked[model])
             continue
-        if tried == 8:
+        if tried == (2 if search else 8):  # Google Search is extra: not worth a long hunt for a model
             break
         tried += 1
         if tried > 1:  # say why we moved on, so a slow fallback does not look like a hang
             log(f"  {last}. Trying {model} ...")
         gen = {"temperature": 0.4}
-        if not model.startswith("gemma"):  # Gemma has no JSON mode; the prompt still asks for JSON
-            gen["responseMimeType"] = "application/json"
-        body = json.dumps({"contents": [{"parts": parts}], "generationConfig": gen}).encode()
+        if not model.startswith("gemma") and not search:  # no JSON mode for Gemma or with Google Search;
+            gen["responseMimeType"] = "application/json"   # the prompt still asks for JSON
+        ask = {"contents": [{"parts": parts}], "generationConfig": gen}
+        if search:
+            ask["tools"] = [{"google_search": {}}]
+        body = json.dumps(ask).encode()
         req = urllib.request.Request(f"{GEMINI_API}/{model}:generateContent", data=body,
                                      headers={"Content-Type": "application/json", "x-goog-api-key": cfg["gemini_api_key"]})
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as r:
-                    res = answer_json(json.loads(r.read().decode()))
+                    data = json.loads(r.read().decode())
+                res = answer_json(data)
+                if search and isinstance(res, dict):
+                    chunks = data["candidates"][0].get("groundingMetadata", {}).get("groundingChunks", [])
+                    res["_sites"] = [c["web"].get("title", "") for c in chunks if c.get("web")]
                 if model != models[0]:
                     log(f"  (answered by Gemini model {model})")
                 today = dt.date.today().isoformat()
@@ -864,6 +1154,10 @@ def gemini(cfg, prompt, attach=None):
                 except ValueError:
                     err = {}
                 last = f"Gemini error {e.code} ({model}): {err.get('message', '')[:150]}"
+                if e.code == 429 and search:
+                    # The Search tool has its own, smaller quota (none on many free keys). The model itself may
+                    # still be fine for CVs, so nothing is marked as blocked.
+                    raise RuntimeError(NO_SEARCH)
                 if e.code == 429:
                     wait, owner = quota_wait(err)
                     if wait <= 60 and attempt < 2:  # per-minute limit: just wait
@@ -1208,16 +1502,20 @@ def file_prefix():
 
 
 def collect(rows, now, today, notes):
-    """Fetch every source and give each job a status: ready / apply on site / done / rejected."""
-    jobs = []
-    for src in SOURCES:
-        try:
-            got = src()
-            jobs += got
-            log(f"{src.__name__}: {len(got)} jobs")
-        except Exception as e:
-            notes.append(f"{src.__name__} failed ({e.__class__.__name__})")
-            log(f"{src.__name__}: ERROR {e}")
+    """Fetch every source and give each job a status: ready / apply on site / done / rejected.
+    The sites are read at the same time (fetch() still spaces requests to any one site)."""
+    got = {}
+    with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
+        running = {pool.submit(src): src for src in SOURCES}
+        for f in as_completed(running):
+            src = running[f]
+            try:
+                got[src] = f.result()
+                log(f"{src.__name__}: {len(got[src])} jobs")
+            except Exception as e:
+                notes.append(f"{src.__name__} failed ({e.__class__.__name__})")
+                log(f"{src.__name__}: ERROR {e}")
+    jobs = [j for src in SOURCES for j in got.get(src, [])]  # in SOURCES order, so duplicates resolve the same way
     out, seen, matches = [], set(), []
     for j in jobs:
         # The same post often shows up on several boards.
@@ -1578,7 +1876,9 @@ def main():
         for j in jobs:
             if j["why"]:
                 reasons[j["why"]] = reasons.get(j["why"], 0) + 1
-        candidates = [j for j in jobs if j["status"] == STATUS_READY]
+        # Gemini sees the best matches first: keyword in the title, then the newest.
+        candidates = sorted([j for j in jobs if j["status"] == STATUS_READY],
+                            key=lambda j: (j.get("match") != "strong", -(j["date"].timestamp() if j["date"] else 0)))
         stats["candidates"] = len(candidates)
         log(f"filter: {reasons}")
         if all(j["status"] == STATUS_REJECTED for j in jobs) and reasons.get("no keyword match", 0) > len(jobs) / 2:

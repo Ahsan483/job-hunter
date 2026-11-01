@@ -44,7 +44,20 @@ Name: "{autodesktop}\Job Hunter"; Filename: "{app}\JobHunter.exe"; Tasks: deskto
 
 [Run]
 Filename: "{app}\JobHunter.exe"; Description: "{cm:LaunchProgram,Job Hunter}"; Flags: nowait postinstall skipifsilent
+; The window's one-click update runs this installer silently with /UPDATE: open Job Hunter again afterwards.
+Filename: "{app}\JobHunter.exe"; Flags: nowait runasoriginaluser; Check: IsUpdate
 
 [UninstallRun]
 ; Remove the 30-minute Auto-run task. Your CVs, profile and keys in %APPDATA%\Job Hunter are kept.
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""Remote Job Hunter"" /F"; Flags: runhidden; RunOnceId: "DeleteAutoRun"
+
+[Code]
+function IsUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/UPDATE') = 0 then
+      Result := True;
+end;

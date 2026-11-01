@@ -15,6 +15,7 @@ import queue
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import tkinter as tk
 import urllib.error
@@ -35,6 +36,7 @@ JOBS_FILE, TRACKER, LOCK = bot.JOBS_FILE, bot.TRACKER, bot.LOCK
 CONFIG = os.path.join(HERE, "config.json")
 PROFILE = os.path.join(HERE, "profile.json")
 RELEASES = f"https://github.com/{bot.REPO}/releases/latest"
+SETUP_URL = f"{RELEASES}/download/JobHunterSetup.exe"
 AUTO_MODEL = "Auto: best free model that is not at its limit"
 TASK = "Remote Job Hunter"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -248,6 +250,26 @@ def latest_release():
             return json.loads(r.read().decode()).get("tag_name")
     except (OSError, ValueError):
         return None
+
+
+def download_setup(progress):
+    """Download the newest installer to the temp folder and return its path. progress(percent) is called as it
+    comes in. Raises OSError/ValueError when the download fails or is not an installer."""
+    path = os.path.join(tempfile.gettempdir(), "JobHunterSetup-update.exe")
+    with urllib.request.urlopen(urllib.request.Request(SETUP_URL, headers=bot.UA), timeout=60) as r, \
+            open(path + ".part", "wb") as f:
+        size, got, shown = int(r.headers.get("Content-Length") or 0), 0, -1
+        while chunk := r.read(256 * 1024):
+            f.write(chunk)
+            got += len(chunk)
+            if size and got * 100 // size != shown:
+                shown = got * 100 // size
+                progress(shown)
+    with open(path + ".part", "rb") as f:
+        if f.read(2) != b"MZ" or got < 1_000_000 or (size and got != size):
+            raise ValueError("the download is not a complete installer")
+    os.replace(path + ".part", path)
+    return path
 
 
 def job_files(job_id):
@@ -652,9 +674,9 @@ class App(tk.Tk):
         self.task_btn.pack(side="right")
         Tooltip(self.task_btn, "Run Auto-draft every 30 minutes in the background while you are signed in to "
                                "Windows. Press again to turn it on or off.")
-        self.update_btn = ttk.Button(bar, style="Big.TButton", command=lambda: webbrowser.open(RELEASES))
-        Tooltip(self.update_btn, f"You have {bot.VERSION}. Download the new installer and run it: your keys, "
-                                 "profile and CVs are kept.")
+        self.update_btn = ttk.Button(bar, style="Big.TButton", command=self.update_now)
+        Tooltip(self.update_btn, f"You have {bot.VERSION}. One click downloads the new version, installs it and "
+                                 "reopens Job Hunter: your keys, profile and CVs are kept.")
 
         row = c.row(pady=(8, 0))
         c.label(row, "Your CV:", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 8))
@@ -1248,8 +1270,13 @@ class App(tk.Tk):
             else:
                 self.status_lbl.config(text="No run in progress.")
             return
-        if not messagebox.askyesno("Stop run", "Stop the run that is in progress?\n\n"
-                                   "Drafts it already made stay in Gmail.", parent=self):
+        if messagebox.askyesno("Stop run", "Stop the run that is in progress?\n\n"
+                               "Drafts it already made stay in Gmail.", parent=self):
+            self.stop_run_now()
+
+    def stop_run_now(self):
+        pid = self.proc.pid if self.proc else lock_owner()
+        if pid is None:
             return
         self.stopped = self.proc is not None
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
@@ -1413,12 +1440,58 @@ class App(tk.Tk):
             if tag and version_tuple(tag) > version_tuple(bot.VERSION):
                 self.update_btn.config(text=f"⬆  Update to {tag}")
                 self.update_btn.pack(side="right", padx=(0, 8))
-                if not quiet and messagebox.askyesno("Job Hunter", f"Version {tag} is out (you have "
-                                                     f"{bot.VERSION}).\n\nOpen the download page?", parent=self):
-                    webbrowser.open(RELEASES)
+                self.new_tag = tag
+                if not quiet:
+                    self.update_now()
             elif not quiet:
                 messagebox.showinfo("Job Hunter", f"You have the latest version ({bot.VERSION})." if tag else
                                     "Could not reach GitHub. Check your internet connection.", parent=self)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def update_now(self):
+        """Download the new installer, run it silently and close: it installs over this copy and reopens Job
+        Hunter. Running from source there is no installer, so the download page opens instead."""
+        tag = getattr(self, "new_tag", "") or "the new version"
+        if not FROZEN:
+            if messagebox.askyesno("Job Hunter", f"{tag} is out (you have {bot.VERSION}).\n\nYou run Job Hunter "
+                                   "from source: update with  git pull.  Open the release page?", parent=self):
+                webbrowser.open(RELEASES)
+            return
+        busy = self.proc or lock_owner()
+        if not messagebox.askyesno("Update Job Hunter", f"Update to {tag} now? (you have {bot.VERSION})\n\n"
+                                   "Job Hunter downloads it, closes, installs it and opens again in about a minute. "
+                                   "Your keys, profile, CVs and tracker are kept."
+                                   + ("\n\nThe run in progress will be stopped." if busy else ""), parent=self):
+            return
+        self.update_btn.state(["disabled"])
+        self.status_lbl.config(text="Downloading the update …")
+
+        def progress(pct):
+            self.after(0, lambda: self.status_lbl.config(text=f"Downloading the update … {pct}%"))
+
+        def work():
+            try:
+                path = download_setup(progress)
+            except (OSError, ValueError) as e:
+                self.after(0, failed, e)
+                return
+            self.after(0, install, path)
+
+        def failed(e):
+            self.update_btn.state(["!disabled"])
+            self.status_lbl.config(text="Update failed.")
+            if messagebox.askyesno("Update Job Hunter", f"The download failed ({e}).\n\nOpen the download page to "
+                                   "get the installer yourself?", parent=self):
+                webbrowser.open(RELEASES)
+
+        def install(path):
+            if self.proc or lock_owner():
+                self.stop_run_now()
+            # /UPDATE tells the installer to open Job Hunter again when it is done (see JobHunter.iss).
+            subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS",
+                              "/NOCANCEL", "/UPDATE"], close_fds=True)
+            self.destroy()
 
         threading.Thread(target=work, daemon=True).start()
 

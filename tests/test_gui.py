@@ -1,6 +1,7 @@
 """The window (gui.py), built for real on a temporary folder. No run, browser or dialog is started."""
 import contextlib
 import csv
+import io
 import json
 import os
 import sys
@@ -209,6 +210,37 @@ class Window(unittest.TestCase):
             self.app.update()
         self.assertEqual(self.app.update_btn.cget("text"), "⬆  Update to v9.0.0")
         self.assertGreater(gui.version_tuple("v1.10.0"), gui.version_tuple(bot.VERSION))
+
+    def test_one_click_update(self):
+        with mock.patch.object(gui, "FROZEN", True), \
+                mock.patch.object(gui.messagebox, "askyesno", return_value=True), \
+                mock.patch.object(gui, "download_setup", return_value="C:\\t\\JobHunterSetup-update.exe"), \
+                mock.patch.object(gui.subprocess, "Popen") as popen, \
+                mock.patch.object(gui.threading, "Thread") as thread, \
+                mock.patch.object(self.app, "destroy") as destroy:
+            self.app.update_now()
+            thread.call_args.kwargs["target"]()
+            self.app.update()
+        args = popen.call_args.args[0]
+        self.assertEqual(args[0], "C:\\t\\JobHunterSetup-update.exe")
+        self.assertIn("/SILENT", args)
+        self.assertIn("/UPDATE", args)  # the installer opens Job Hunter again
+        destroy.assert_called_once()
+
+    def test_update_download_must_be_an_installer(self):
+        class Answer(io.BytesIO):
+            headers = {"Content-Length": "12"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch.object(gui.urllib.request, "urlopen", return_value=Answer(b"<html>404</h")), \
+                mock.patch.object(gui.tempfile, "gettempdir", return_value=self.dir):
+            with self.assertRaises(ValueError):
+                gui.download_setup(lambda pct: None)
 
 
 class LogLines(unittest.TestCase):

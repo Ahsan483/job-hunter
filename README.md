@@ -108,7 +108,7 @@ The window is a set of frosted-glass cards over a navy gradient. Drag the gaps b
 - **Settings**: fit score, draft limits, Gemini call limit and the years-of-experience filter. **Gmail & Gemini keys…** changes your keys.
 - **Help**: getting started, this guide, report a problem, check for updates.
 - **Auto-run**: sets up and turns on or off the 30-minute schedule (see below).
-- **Update to vX.Y**: shows up when a newer version is out. Download and run the installer: your keys, profile and CVs are kept.
+- **Update to vX.Y**: shows up when a newer version is out. One click downloads it, installs it and reopens Job Hunter (from 1.4.1 on; older versions: download the installer once). Your keys, profile and CVs are kept.
 
 **Your CV**
 - **Upload my CV**: rebuilds `profile.json` from your CV (.pdf, .docx, .txt, .md, or a .png/.jpg photo). The old one is kept as `profile.backup-*.json`.

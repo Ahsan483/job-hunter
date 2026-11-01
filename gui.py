@@ -36,7 +36,8 @@ JOBS_FILE, TRACKER, LOCK = bot.JOBS_FILE, bot.TRACKER, bot.LOCK
 CONFIG = os.path.join(HERE, "config.json")
 PROFILE = os.path.join(HERE, "profile.json")
 RELEASES = f"https://github.com/{bot.REPO}/releases/latest"
-SETUP_URL = f"{RELEASES}/download/JobHunterSetup.exe"
+SETUP_URL = f"{RELEASES}/download/JobHunterSetup.exe"  # the installer file itself is hosted on GitHub
+DOWNLOAD_PAGE = "https://www.codeprojectsofficial.com/tools"
 AUTO_MODEL = "Auto: best free model that is not at its limit"
 TASK = "Remote Job Hunter"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -1455,8 +1456,8 @@ class App(tk.Tk):
         tag = getattr(self, "new_tag", "") or "the new version"
         if not FROZEN:
             if messagebox.askyesno("Job Hunter", f"{tag} is out (you have {bot.VERSION}).\n\nYou run Job Hunter "
-                                   "from source: update with  git pull.  Open the release page?", parent=self):
-                webbrowser.open(RELEASES)
+                                   "from source: update with  git pull.  Open the download page?", parent=self):
+                webbrowser.open(DOWNLOAD_PAGE)
             return
         busy = self.proc or lock_owner()
         if not messagebox.askyesno("Update Job Hunter", f"Update to {tag} now? (you have {bot.VERSION})\n\n"
@@ -1483,7 +1484,7 @@ class App(tk.Tk):
             self.status_lbl.config(text="Update failed.")
             if messagebox.askyesno("Update Job Hunter", f"The download failed ({e}).\n\nOpen the download page to "
                                    "get the installer yourself?", parent=self):
-                webbrowser.open(RELEASES)
+                webbrowser.open(DOWNLOAD_PAGE)
 
         def install(path):
             if self.proc or lock_owner():
@@ -1498,7 +1499,7 @@ class App(tk.Tk):
     def about(self):
         messagebox.showinfo("About Job Hunter", f"Job Hunter {bot.VERSION}\n\nFree, open-source remote job search "
                             "with tailored CVs written by Google Gemini. It never sends anything itself.\n\n"
-                            f"Your files: {HERE}\n\nhttps://github.com/{bot.REPO}", parent=self)
+                            f"Your files: {HERE}\n\n{DOWNLOAD_PAGE}\nhttps://github.com/{bot.REPO}", parent=self)
 
     def open_gmail(self):
         who = read_config().get("gmail_address", "")

@@ -3,8 +3,8 @@
 Each run:
   1. pulls remote jobs from Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely,
      Working Nomads and the latest Hacker News "Who is hiring?" thread
-  2. keeps roles matching your keywords that are remote, recent and (unless turned off)
-     open worldwide or to your region
+  2. keeps roles matching your keywords that are recent, of the work type you picked (remote / hybrid /
+     on-site) and open to you: worldwide or in your region, in countries you named, or anywhere
   3. finds an application email published in the post, or on the company's
      own careers/jobs/contact page
   4. asks Gemini (free tier) to check the fit and write the tailoring + email
@@ -53,7 +53,7 @@ HERE = os.environ.get("JOBHUNTER_HOME") or (
     else os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(HERE, exist_ok=True)
 CODE = os.path.dirname(os.path.abspath(__file__))  # bot.py and cv.py
-VERSION = "1.3.0"  # installer/build.ps1 checks that the release tag matches
+VERSION = "1.4.0"  # installer/build.ps1 checks that the release tag matches
 REPO = "Ahsan483/job-hunter"
 UA = {"User-Agent": f"Mozilla/5.0 (compatible; JobHunter/{VERSION}; +https://github.com/{REPO})"}
 MIN_GAP = 1.5  # seconds between two requests to the same site
@@ -87,10 +87,17 @@ DEFAULT_CONFIG = {
     "max_job_age_days": MAX_AGE_DAYS,
     # Skip jobs asking for this many years of experience or more (0 = never skip).
     "max_years_required": 8,
-    # True: only jobs that say they hire worldwide or in my_region_words. False: every remote job, any country.
-    "worldwide_only": True,
+    # Kinds of work to keep: any of "remote", "hybrid", "onsite".
+    "work_modes": ["remote"],
+    # Where a job must be open to you. "me": remote jobs open worldwide or naming my_region_words, office jobs in
+    # my_region_words. "countries": the same with target_countries. "anywhere": no limit.
+    "open_to": "me",
     # Your country/region, e.g. ["Pakistan", "South Asia"]. Jobs naming one of these count as open to you.
     "my_region_words": [],
+    # Countries you would work for or move to, for open_to "countries", e.g. ["UAE", "Saudi Arabia", "Germany"].
+    "target_countries": [],
+    # Also keep on-site/hybrid jobs in other countries when the post offers visa sponsorship or relocation.
+    "visa_sponsorship": False,
     # Also ask Gemini to search Google (finds posts on LinkedIn, Indeed, Glassdoor, company sites). One Gemini
     # request every few hours; needs a Gemini key.
     "search_google": True,
@@ -147,8 +154,13 @@ COMPOUNDS = re.compile(r"\b(full|front|back|dev|e|cyber|data|word|web|copy|book|
                        r"force|script|label|admin|work\w*)\b", re.I)
 # Words that only say what kind of job it is: "React Developer" partly matches "Frontend Engineer (React)",
 # but "developer" alone is not a reason to show a job.
+# Short forms people type for the long word in titles: "dotnet dev" finds ".NET Developer".
+SHORT_FORMS = {"dev": r"\bdev(?:elopers?|elopment|s)?\b", "eng": r"\beng(?:ineers?|ineering)?\b",
+               "mgr": r"\b(?:mgr|managers?)\b", "admin": r"\badmin(?:istrators?|istration)?\b",
+               "dotnet": r"(?:\bdotnet\b|\.net\b)", ".net": r"(?:\.net\b|\bdotnet\b)"}
 ROLE_WORDS = {"developer", "engineer", "programmer", "designer", "writer", "assistant", "agent", "representative",
-              "rep", "administrator", "admin", "technician", "architect", "operator", "staff", "worker", "member"}
+              "rep", "administrator", "admin", "technician", "architect", "operator", "staff", "worker", "member",
+              "dev", "eng"}
 
 
 def joined(text):
@@ -173,6 +185,8 @@ def near(w, words):
 
 def word_pattern(w):
     """Regex for one keyword word: other forms of a long plain word count (recruiter ~ recruiting, recruitment)."""
+    if w in SHORT_FORMS:
+        return SHORT_FORMS[w]
     if not re.fullmatch(r"[a-z]{5,}", w):
         return (r"\b" if w[0].isalnum() else "") + re.escape(w) + (r"\b" if w[-1].isalnum() else "")
     s = stem(w)
@@ -201,9 +215,14 @@ class Keyword:
         self.alias_res = [word_re([a]) for a in self.aliases]
         self.parts = [(w, re.compile(word_pattern(w), re.I)) for w in self.words]
         self.exact = word_re([joined(keyword)])  # job text names skills in passing: it must say the keyword itself
-        # Words of a several-word keyword that say what the job is about, for partial matches.
+        if keyword.strip().startswith(".") and self.exact:  # ".NET", not the web address "nativecamp.net"
+            self.exact = re.compile(r"(?<!(?-i:[a-z0-9-]))" + self.exact.pattern, re.I)
+        # Words of a several-word keyword that say what the job is about, for partial matches: "React Developer"
+        # partly matches "Frontend Engineer (React)". A keyword with no role word is one name ("Entity Framework"):
+        # "Legal Entity Governance" is not part of it.
         self.specific = [(w, rx) for w, rx in self.parts if len(self.parts) > 1 and w not in ROLE_WORDS
-                         and w not in NOISE and w not in TOO_BROAD and not near(w, RANK)]
+                         and w not in NOISE and w not in TOO_BROAD and not near(w, RANK)
+                         and any(x in ROLE_WORDS or near(x, RANK) for x in self.words)]
         self.squashed = "".join(self.words) if all(w.isalpha() for w in self.words) else ""
 
     def in_title(self, title):
@@ -265,8 +284,10 @@ MATCH = Matcher(DEFAULT_CONFIG["keywords"])
 TITLE_ONLY = False
 EXCLUDE = None
 SEARCH = DEFAULT_CONFIG["keywords"][:10]  # terms sent to the sites that have a search
-WORLDWIDE_ONLY = True
-REGION = None  # regex of my_region_words
+MODES = {"remote"}  # work_modes
+OPEN_TO = "me"
+REGION = None  # regex of the places a job must name: my_region_words, or target_countries
+VISA_OK = False
 MAX_YEARS = 8
 # We Work Remotely has one feed per job category.
 WWR_FEEDS = {
@@ -286,7 +307,7 @@ GOOGLE = None  # the config, when src_google may ask Gemini to search Google
 
 
 def apply_filters(cfg):
-    global MATCH, TITLE_ONLY, EXCLUDE, SEARCH, MAX_AGE_DAYS, WORLDWIDE_ONLY, REGION, MAX_YEARS, FIELDS, GOOGLE
+    global MATCH, TITLE_ONLY, EXCLUDE, SEARCH, MAX_AGE_DAYS, MODES, OPEN_TO, REGION, VISA_OK, MAX_YEARS, FIELDS,         GOOGLE
     GOOGLE = cfg if cfg.get("search_google", True) and is_set(str(cfg.get("gemini_api_key") or "")) else None
     kws = clean_words(cfg.get("keywords")) or DEFAULT_CONFIG["keywords"]
     MATCH = Matcher(kws)
@@ -296,9 +317,28 @@ def apply_filters(cfg):
               if f.lower() in WWR_FEEDS or f.lower() == "all"] or DEFAULT_CONFIG["job_fields"]
     EXCLUDE = word_re(clean_words(cfg.get("exclude_keywords")))
     MAX_AGE_DAYS = int(cfg.get("max_job_age_days") or MAX_AGE_DAYS)
-    WORLDWIDE_ONLY = bool(cfg.get("worldwide_only", cfg.get("pakistan_only", True)))
-    REGION = word_re(clean_words(cfg.get("my_region_words")))
+    MODES = work_modes(cfg)
+    OPEN_TO = open_to(cfg)
+    REGION = word_re(places(cfg))
+    VISA_OK = bool(cfg.get("visa_sponsorship"))
     MAX_YEARS = int(cfg.get("max_years_required", MAX_YEARS) or 0)
+
+
+WORK_MODES = {"remote": "Remote", "hybrid": "Hybrid", "onsite": "On-site"}
+
+
+def open_to(cfg):
+    """me / countries / anywhere. Before 1.4 there was only worldwide_only (on: me, off: anywhere); the window
+    drops it once it saves open_to."""
+    if cfg.get("worldwide_only", cfg.get("pakistan_only")) is False:
+        return "anywhere"
+    v = cfg.get("open_to")
+    return v if v in ("me", "countries", "anywhere") else "me"
+
+
+def places(cfg):
+    """The countries/regions a job must name to be open to you."""
+    return clean_words(cfg.get("target_countries" if open_to(cfg) == "countries" else "my_region_words"))
 
 
 def q(term):
@@ -474,15 +514,21 @@ def src_remoteok():
     return out
 
 
+def office_mode(remote, title, location):
+    """For sites with a remote yes/no flag: remote, or hybrid / onsite."""
+    return "remote" if remote else "hybrid" if HYBRID.search(f"{title} {location}") else "onsite"
+
+
 def src_arbeitnow():
     out = []
     for page in (1, 2, 3):
         d = fetch(f"https://www.arbeitnow.com/api/job-board-api?page={page}", as_json=True)
         for j in d.get("data", []):
-            if not j.get("remote"):
+            if not j.get("remote") and MODES == {"remote"}:
                 continue
             out.append(dict(source="arbeitnow", id=f"arbeitnow-{j['slug']}", title=j["title"],
                             company=j["company_name"], url=j["url"], location=j.get("location", ""),
+                            mode=office_mode(j.get("remote"), j["title"], j.get("location", "")),
                             text=text_of(j.get("description")), date=parse_date(j.get("created_at")),
                             job_type=", ".join(j.get("job_types", [])), tags=", ".join(j.get("tags", []))))
         if not (d.get("links") or {}).get("next"):
@@ -640,10 +686,12 @@ def src_4dayweek():
     for page in (1, 2, 3):
         d = fetch(f"https://4dayweek.io/api?page={page}", as_json=True)
         for j in d.get("jobs", []):
-            if str(j.get("is_remote")).lower() != "true":
+            remote = str(j.get("is_remote")).lower() == "true"
+            if not remote and MODES == {"remote"}:
                 continue
             out.append(dict(source="4dayweek", id=f"4dayweek-{j.get('id_str') or j.get('slug')}",
                             title=j.get("title", ""), company=j.get("company_name", ""), url=j.get("url", ""),
+                            mode=office_mode(remote, j.get("title", ""), j.get("location_original", "")),
                             location=j.get("location_original") or j.get("location_country") or "Remote",
                             text=text_of(j.get("description")), date=parse_date(j.get("posted")),
                             level=j.get("level", ""), tags=j.get("category", "")))
@@ -671,8 +719,8 @@ def board_jobs(ats, name):
                        company=j.get("company_name") or name, url=j.get("absolute_url", ""),
                        location=(j.get("location") or {}).get("name", ""), text="",
                        date=parse_date(j.get("first_published") or j.get("updated_at")), any_job=True)
-            remote = REMOTE_OK_LOC.search(job["location"])
-            if remote and reads < 15 and MATCH.score(job["title"]):  # 15 a company keeps a search quick
+            wanted = REMOTE_OK_LOC.search(job["location"]) or MODES != {"remote"}
+            if wanted and reads < 15 and MATCH.score(job["title"]):  # 15 a company keeps a search quick
                 reads += 1
                 job["text"] = text_of(html.unescape(fetch(f"{base}/{j['id']}", as_json=True).get("content", "")))
             out.append(job)
@@ -683,6 +731,7 @@ def board_jobs(ats, name):
                      url=j.get("jobUrl", ""), location=", ".join(filter(None, [
                          j.get("location"), "Remote" if j.get("isRemote") or j.get("workplaceType") == "Remote" else ""])),
                      text=j.get("descriptionPlain", ""), date=parse_date(j.get("publishedAt")),
+                     mode=ATS_MODE.get(str(j.get("workplaceType")).lower()),
                      job_type=j.get("employmentType", ""), any_job=True) for j in d.get("jobs", [])]
     d = fetch(f"https://api.lever.co/v0/postings/{name}?mode=json", as_json=True)
     return [dict(source="lever", id=f"lever-{j['id']}", title=j.get("text", ""), company=name.title(),
@@ -691,17 +740,42 @@ def board_jobs(ats, name):
                      "Remote" if j.get("workplaceType") == "remote" else ""])),
                  text=f"{j.get('descriptionPlain', '')}\n{j.get('additionalPlain', '')}",
                  date=parse_date(j.get("createdAt")), job_type=(j.get("categories") or {}).get("commitment", ""),
-                 any_job=True) for j in d]
+                 mode=ATS_MODE.get(str(j.get("workplaceType")).lower()), any_job=True) for j in d]
+
+
+# workplaceType as Ashby and Lever write it.
+ATS_MODE = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite", "on-site": "onsite"}
 
 
 GOOGLE_CACHE = os.path.join(HERE, "google_cache.json")
 GOOGLE_TTL = 4 * 3600  # Auto-run every 30 minutes must not use up the free Gemini quota
 GOOGLE_PROMPT = """Use Google Search to find up to 30 real job postings published in the last {days} days for any of
-these: {terms}. Only remote jobs{where}. Search LinkedIn, Indeed, Glassdoor, Wellfound, company career pages and other
+these: {terms}. Only {where}. Search LinkedIn, Indeed, Glassdoor, Wellfound, company career pages and other
 job sites. Only include postings you actually found in the search results, each with the posting's own URL.
 Return ONLY JSON:
 {{"jobs": [{{"title": "", "company": "", "url": "", "location": "as the posting says", "posted": "YYYY-MM-DD or \\"\\"",
+  "work": "remote, hybrid or onsite",
   "description": "3-5 sentences from the posting: the work, the requirements and how to apply (keep any email address)"}}]}}"""
+
+
+def wanted_jobs(cfg):
+    """The jobs the filter keeps, in words: 'remote jobs open to people in Pakistan or worldwide, or on-site jobs in
+    Pakistan'. For the Google search and for Gemini's eligibility check."""
+    where, anywhere = ", ".join(places(cfg)), open_to(cfg) == "anywhere"
+    modes = work_modes(cfg)
+    parts = []
+    if "remote" in modes:
+        parts.append("remote jobs" + ("" if anywhere else
+                                      f" open to people in {where} or worldwide" if where else " open worldwide"))
+    office = " or ".join(WORK_MODES[m].lower() for m in ("hybrid", "onsite") if m in modes)
+    if office:
+        parts.append(f"{office} jobs" + ("" if anywhere else f" in {where or 'my country'}" + (
+            " or in other countries with visa sponsorship or relocation" if cfg.get("visa_sponsorship") else "")))
+    return ", or ".join(parts)
+
+
+def work_modes(cfg):
+    return {m for m in clean_words(cfg.get("work_modes")) if m in WORK_MODES} or {"remote"}
 
 
 def src_google():
@@ -709,10 +783,7 @@ def src_google():
     Search. A posting is kept only if its site is among the pages Google returned, so no made-up links get in."""
     if not GOOGLE:
         return []
-    where = f", open to people in {', '.join(clean_words(GOOGLE.get('my_region_words')))} or worldwide" \
-        if WORLDWIDE_ONLY and clean_words(GOOGLE.get("my_region_words")) else \
-        ", open worldwide" if WORLDWIDE_ONLY else ""
-    prompt = GOOGLE_PROMPT.format(days=MAX_AGE_DAYS, terms=", ".join(SEARCH), where=where)
+    prompt = GOOGLE_PROMPT.format(days=MAX_AGE_DAYS, terms=", ".join(SEARCH), where=wanted_jobs(GOOGLE))
     ask = key_id(prompt)
     try:
         with open(GOOGLE_CACHE, encoding="utf-8") as f:
@@ -750,7 +821,8 @@ def src_google():
     now = dt.datetime.now(dt.timezone.utc)
     return [dict(source="google", id=f"google-{key_id(j['url'])}", title=str(j.get("title", "")),
                  company=str(j.get("company", "")), url=j["url"], location=str(j.get("location") or "Remote"),
-                 text=str(j.get("description", "")), date=parse_date(j.get("posted")) or now) for j in found]
+                 text=str(j.get("description", "")), date=parse_date(j.get("posted")) or now,
+                 mode=ATS_MODE.get(str(j.get("work", "")).lower())) for j in found]
 
 
 def src_companies():
@@ -826,6 +898,64 @@ def open_to_me(job):
     return True if OPEN_TEXT.search(head) or (REGION and REGION.search(head)) else None
 
 
+REMOTE_TITLE = re.compile(r"\b(remote|wfh|work from home|telecommute)\b", re.I)
+HYBRID = re.compile(r"\bhybrid\b", re.I)
+# Posts that help people from other countries come and work on site.
+VISA = re.compile(r"(visa sponsorship|sponsor(ship)? (for )?(your |a |the |work |employment )*visas?|visas? (support|"
+                  r"assistance|provided|sponsored)|relocation (support|package|assistance|allowance|bonus|help)|"
+                  r"(help|assist|support) (you )?(with |to )?relocat|relocate you|work permit (support|assistance)|"
+                  r"we sponsor|blue card)", re.I)
+NO_VISA = re.compile(r"(\bno|not|unable to|cannot|can't|don't|do not|won't|without)\s+(\w+\s+){0,3}"
+                     r"(visa|sponsor|relocat)", re.I)
+
+
+def job_mode(job):
+    """remote, hybrid or onsite. A source that says so sets job["mode"]; otherwise the location and title tell."""
+    if job.get("mode") in WORK_MODES:
+        return job["mode"]
+    loc, title = job["location"], job["title"]
+    if REMOTE_OK_LOC.search(loc) or REMOTE_TITLE.search(title):
+        return "remote"
+    if HYBRID.search(f"{loc} {title}"):
+        return "hybrid"
+    if ONSITE.search(f"{loc} {title}"):
+        return "onsite"
+    # Job boards list remote jobs only, so a location like "Philippines" there still means remote. HN posts and
+    # company career pages list every kind of job: there no word of remote work means an office job.
+    if job["source"] == "hn" or job.get("any_job"):
+        text = job["text"][:3000]
+        return "remote" if REMOTE_OK_LOC.search(text) and not ONSITE.search(text) else             "hybrid" if HYBRID.search(text) else "onsite"
+    return "remote"
+
+
+def sponsors_visa(text):
+    return bool(VISA.search(text)) and not NO_VISA.search(text)
+
+
+def place_problem(job, mode, blob):
+    """Why a job is not open to you where you are (or would go), or None. May set job["note"]."""
+    mine = "my countries" if OPEN_TO == "countries" else "my region"
+    named = bool(REGION and REGION.search(job["location"]))
+    if mode != "remote":
+        # An office job is open to you if it is in one of your places, or if it brings people from abroad.
+        if named:
+            return None
+        if VISA_OK and sponsors_visa(job["text"]):
+            if BLOCK_LOC.search(blob):
+                return "location/work-auth restricted"
+            job["note"] = "offers visa sponsorship or relocation: check it covers your country"
+            return None
+        return f"{WORK_MODES[mode].lower()} outside {mine}"
+    if BLOCK_LOC.search(blob) and not named:
+        return "location/work-auth restricted"
+    open_ = open_to_me(job)
+    if open_ is False:
+        return f"not open worldwide/to {mine}"
+    if open_ is None:
+        job["note"] = "location not stated: check the post hires in your country"
+    return None
+
+
 def prefilter(job, now):
     """Why a job is left out, or None. Sets job["match"] ("strong" / "partial") and job["note"]."""
     blob = f"{job['title']}\n{job['location']}\n{job['text']}"
@@ -839,23 +969,12 @@ def prefilter(job, now):
         return "no post date"
     if (now - job["date"]).days > MAX_AGE_DAYS:
         return "too old"
-    # Job boards list remote jobs only (Arbeitnow is filtered on its own remote flag), so a location like
-    # "Philippines" there still means remote. HN posts and company career pages list every kind of job.
-    where = job["location"] + " " + job["text"][:3000]
-    if (job["source"] == "hn" or job.get("any_job")) and not (REMOTE_OK_LOC.search(where)
-                                                             or (REGION and REGION.search(where))):
-        return "not remote"
-    if WORLDWIDE_ONLY:
-        if BLOCK_LOC.search(blob):
-            return "location/work-auth restricted"
-        open_ = open_to_me(job)
-        if open_ is False:
-            return "not open worldwide/to my region"
-        if open_ is None:
-            job["note"] = "location not stated: check the post hires in your country"
-    head = job["location"] if job["source"] == "hn" else job["location"] + " " + job["title"]
-    if ONSITE.search(head) and not re.search(r"remote", head, re.I):
-        return "onsite/hybrid"
+    mode = job["mode"] = job_mode(job)
+    if mode not in MODES:
+        return f"{WORK_MODES[mode].lower()} job"
+    why = place_problem(job, mode, blob) if OPEN_TO != "anywhere" else None
+    if why:
+        return why
     if MAX_YEARS and max(years_asked(blob), default=0) >= MAX_YEARS:
         return f"{MAX_YEARS}+ years"
     return None
@@ -967,7 +1086,7 @@ def already_done(rows, job, mail, today):
 
 # ---------- Gemini ----------
 
-GEMINI_PROMPT = """You help {name} apply for remote jobs. {name} lives in {location}.
+GEMINI_PROMPT = """You help {name} apply for {wanted}. {name} lives in {location}.
 PROFILE (the ONLY source of facts; never add anything that is not here):
 {profile}
 
@@ -980,7 +1099,7 @@ Description:
 
 Decide and write. Return ONLY JSON with exactly these keys:
 {{
- "eligible": true/false,   // false if the job is not open to someone working remotely from {location}, needs a visa/citizenship/residency/clearance, is onsite/hybrid, is a staffing/C2C/bench-sales post, or looks like a scam
+ "eligible": true/false,   // false if {not_eligible}, is a staffing/C2C/bench-sales post, or looks like a scam
  "reason": "one short sentence",
  "fit_score": 0-100,       // how well the profile matches the job's real requirements; be strict about missing core skills
  "tailor": {{
@@ -997,8 +1116,8 @@ Decide and write. Return ONLY JSON with exactly these keys:
 }}
 These words are in the job ad but NOT in PROFILE. Never put them in the title, summary or rewrites (the CV check removes any sentence that uses one): {avoid}
 Rewrites: reword the 2-3 bullets per role that matter most for this job. Never add a technology, tool, software, certification, language, number, client or responsibility that is not in PROFILE: if the job asks for C++ and PROFILE has C#, write about C#, never C++; if it asks for SAP and PROFILE has QuickBooks, write about QuickBooks.
-Email rules: greeting to the company team (or the person if the post names who to email); say which role and where it was seen; 2-3 short sentences matching their requirements to real facts and numbers from PROFILE, only the relevant ones; "I'm based in {location_short}, available for remote work and able to overlap with your team's hours."; links: {links}; "My CV is attached."; ask for a short call; sign off with {sign_off}.
-Cover letter rules: start "Dear <team or the person named in the post>,"; paragraph 1: the role, where it was seen, one specific reason this company or product fits; paragraphs 2-3: take the job's 3-4 main requirements and answer each with a concrete PROFILE fact (project, result, number); only paragraph 1 may describe the company's product; from paragraph 2 on, describe only work PROFILE says {name} did, in PROFILE's own terms, without adding the job's wording to it; if the job needs something PROFILE does not have, say plainly and briefly which PROFILE experience is closest and how it transfers, never claim it; no inflated words like "extensive", "deep", "massive", "expert"; last paragraph: remote from {location_short}, overlap with their hours, ask for a call; end "Sincerely,\\n{name}". No address block, no date, no links, no markdown.
+Email rules: greeting to the company team (or the person if the post names who to email); say which role and where it was seen; 2-3 short sentences matching their requirements to real facts and numbers from PROFILE, only the relevant ones; "{availability}"; links: {links}; "My CV is attached."; ask for a short call; sign off with {sign_off}.
+Cover letter rules: start "Dear <team or the person named in the post>,"; paragraph 1: the role, where it was seen, one specific reason this company or product fits; paragraphs 2-3: take the job's 3-4 main requirements and answer each with a concrete PROFILE fact (project, result, number); only paragraph 1 may describe the company's product; from paragraph 2 on, describe only work PROFILE says {name} did, in PROFILE's own terms, without adding the job's wording to it; if the job needs something PROFILE does not have, say plainly and briefly which PROFILE experience is closest and how it transfers, never claim it; no inflated words like "extensive", "deep", "massive", "expert"; last paragraph: {closing}, ask for a call; end "Sincerely,\\n{name}". No address block, no date, no links, no markdown.
 Never claim more than {years} years. No cliches like "passionate" or "hardworking"."""
 
 
@@ -1596,17 +1715,35 @@ def set_job_status(job_id, status, why=""):
     write_jobs(d)
 
 
-def job_prompt(profile, j):
+def job_prompt(cfg, profile, j):
     c = profile["contact"]
     links = " , ".join(f"{label} {c[k]}" for label, k in
                        (("Portfolio", "portfolio"), ("GitHub", "github"), ("LinkedIn", "linkedin")) if c.get(k))
     home = profile.get("location") or "my country"
+    short = re.sub(r",?\s*open to remote.*$", "", home, flags=re.I)
     avoid = sorted(borrowed_words(f"{j['title']}\n{j['text'][:9000]}", profile))[:120]
+    mode = j.get("mode") or job_mode(j)
+    if mode == "remote":
+        not_eligible = (f"the job is not open to someone working remotely from {home}, needs a visa/citizenship/"
+                        "residency/clearance, or is really on site/hybrid")
+        availability = f"I'm based in {short}, available for remote work and able to overlap with your team's hours."
+        closing = f"remote from {short}, overlap with their hours"
+    else:
+        where = ", ".join(places(cfg)) or home
+        local = word_re(places(cfg) or [short]).search(j["location"])
+        not_eligible = (f"this {WORK_MODES[mode].lower()} job is not in {where}"
+                        + (f" and does not offer visa sponsorship or relocation to someone from {home}"
+                           if cfg.get("visa_sponsorship") else "")
+                        + ", or needs citizenship or a security clearance")
+        availability = f"I'm based in {short} and can work from your office." if local else \
+            f"I'm based in {short} and ready to relocate to work from your office."
+        closing = "available to work from their office" if local else "ready to relocate to work from their office"
     return GEMINI_PROMPT.format(profile=json.dumps(profile, ensure_ascii=False), source=j["source"],
-                                avoid=", ".join(avoid) or "(none)",
+                                avoid=", ".join(avoid) or "(none)", wanted=wanted_jobs(cfg),
+                                not_eligible=not_eligible, availability=availability, closing=closing,
                                 url=j["url"], title=j["title"], company=j["company"], job_location=j["location"],
                                 text=j["text"][:9000], name=profile["name"], location=home,
-                                location_short=re.sub(r",?\s*open to remote.*$", "", home, flags=re.I),
+                                location_short=short,
                                 years=profile.get("years") or "the stated", links=links,
                                 sign_off=", ".join(f'"{v}"' for v in (profile["name"], c.get("email"),
                                                                        c.get("phone")) if v))
@@ -1615,7 +1752,7 @@ def job_prompt(profile, j):
 def tailor_job(cfg, profile, j, today, min_fit=None):
     """Ask Gemini about one job and build the tailored CV. Returns (result, pdf), pdf is None if skipped.
     min_fit=0 means you asked for this CV yourself: it is made even if Gemini thinks you are not eligible."""
-    res = gemini(cfg, job_prompt(profile, j))
+    res = gemini(cfg, job_prompt(cfg, profile, j))
     if not isinstance(res, dict):
         res = {}
     problem = safe(res, profile)

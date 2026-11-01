@@ -36,6 +36,15 @@ class Matching(unittest.TestCase):
         self.assertEqual(score("front end", "Front Desk Agent"), 0)
         self.assertEqual(score("React Developer", "Python Developer"), 0)  # "developer" alone is not enough
         self.assertEqual(score("Kubernetes", "Platform Engineer", None), 0)  # title only
+        self.assertEqual(score("Entity Framework", "Manager, Legal Entity Governance"), 0)  # one name, not "entity"
+        self.assertEqual(score(".NET", "English Teacher", "Apply at https://nativecamp.net/apply"), 0)  # web address
+
+    def test_dotnet(self):
+        for keyword in (".NET", "dotnet", "dotnet dev", ".net developer"):
+            self.assertEqual(score(keyword, "Senior .NET Developer"), bot.STRONG, keyword)
+        self.assertEqual(score("dotnet dev", "Dotnet Developer"), bot.STRONG)
+        self.assertEqual(score(".NET", "Backend Engineer", "We use C#, .NET 8 and Azure."), bot.PARTIAL)
+        self.assertEqual(score("dotnet dev", "DevOps Engineer"), 0)
 
     def test_strength_is_recorded(self):
         bot.apply_filters(dict(bot.DEFAULT_CONFIG, keywords=["React Developer"], worldwide_only=False))
@@ -67,8 +76,68 @@ class Location(unittest.TestCase):
                          "not open worldwide/to my region")
 
     def test_company_pages_list_office_jobs_too(self):
-        self.assertEqual(self.check(any_job=True, location="San Francisco, CA")[0], "not remote")
+        self.assertEqual(self.check(any_job=True, location="San Francisco, CA")[0], "on-site job")
         self.assertIsNone(self.check(any_job=True, location="Remote, Worldwide")[0])
+
+
+class WorkTypeAndPlace(unittest.TestCase):
+    """Remote / hybrid / on-site, and whether the job is open where you live or would go."""
+
+    def use(self, **cfg):
+        bot.apply_filters(dict(bot.DEFAULT_CONFIG, keywords=["Engineer"], my_region_words=["Pakistan"], **cfg))
+
+    def check(self, **kw):
+        job = dict(dict(source="greenhouse", id="1", title="Engineer", company="A", url="", location="Remote",
+                        text="Join us.", date=NOW, any_job=True), **kw)
+        return bot.prefilter(job, NOW), job.get("mode"), job.get("note", "")
+
+    def test_work_type(self):
+        self.use(work_modes=["remote", "hybrid", "onsite"], open_to="anywhere")
+        self.assertEqual(self.check(location="Lahore, Pakistan")[1], "onsite")
+        self.assertEqual(self.check(location="Berlin (Hybrid)")[1], "hybrid")
+        self.assertEqual(self.check(location="Remote - EMEA")[1], "remote")
+        self.assertEqual(self.check(location="London", mode="hybrid")[1], "hybrid")  # the site said so
+        self.assertEqual(self.check(source="himalayas", any_job=False, location="Philippines")[1], "remote")
+
+    def test_only_the_ticked_work_types(self):
+        self.use(work_modes=["onsite"])
+        self.assertEqual(self.check(location="Remote, Worldwide")[0], "remote job")
+        self.assertIsNone(self.check(location="Karachi, Pakistan")[0])
+
+    def test_office_job_in_my_country_or_with_a_visa(self):
+        self.use(work_modes=["onsite", "hybrid"])
+        self.assertIsNone(self.check(location="Islamabad, Pakistan")[0])
+        self.assertEqual(self.check(location="Dubai, UAE")[0], "on-site outside my region")
+        self.use(work_modes=["onsite"], visa_sponsorship=True)
+        why, _, note = self.check(location="Berlin, Germany", text="We offer visa sponsorship and relocation support.")
+        self.assertIsNone(why)
+        self.assertIn("visa", note)
+        self.assertEqual(self.check(location="Berlin", text="We cannot offer visa sponsorship.")[0],
+                         "on-site outside my region")
+
+    def test_countries_i_pick(self):
+        self.use(work_modes=["remote", "onsite"], open_to="countries", target_countries=["UAE", "Germany"])
+        self.assertIsNone(self.check(location="Dubai, UAE")[0])
+        self.assertIsNone(self.check(source="himalayas", any_job=False, location="Germany")[0])
+        self.assertIsNone(self.check(location="Remote, Worldwide")[0])
+        self.assertEqual(self.check(location="Lahore, Pakistan")[0], "on-site outside my countries")
+        self.assertEqual(self.check(source="himalayas", any_job=False, location="Canada")[0],
+                         "not open worldwide/to my countries")
+
+    def test_any_country(self):
+        self.use(work_modes=["onsite"], open_to="anywhere")
+        self.assertIsNone(self.check(location="Austin, TX")[0])
+
+    def test_old_worldwide_only_setting(self):
+        self.assertEqual(bot.open_to({"worldwide_only": False, "open_to": "me"}), "anywhere")
+        self.assertEqual(bot.open_to({"worldwide_only": True}), "me")
+        self.assertEqual(bot.open_to({}), "me")
+
+    def test_described_for_google_and_gemini(self):
+        cfg = dict(my_region_words=["Pakistan"], work_modes=["remote", "onsite"], visa_sponsorship=True)
+        self.assertEqual(bot.wanted_jobs(cfg), "remote jobs open to people in Pakistan or worldwide, or on-site jobs "
+                                               "in Pakistan or in other countries with visa sponsorship or relocation")
+        self.assertEqual(bot.wanted_jobs(dict(open_to="anywhere", work_modes=["hybrid"])), "hybrid jobs")
 
 
 def rss(*items):

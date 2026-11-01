@@ -63,6 +63,7 @@ MATCH_HELP = {"strong": "a keyword is in the job title",
               "partial": "part of a keyword is in the title, or a keyword is only in the description"}
 LABEL = {"ready": "✉ Ready", "apply on site": "🌐 Apply on site", "done": "✔ Done", "rejected": "✖ Rejected"}
 DEFAULT_KEYWORDS = bot.DEFAULT_CONFIG["keywords"]
+OPEN_TO_LABEL = {"me": "Worldwide + my country", "countries": "Countries I pick", "anywhere": "Any country"}
 # (key, label, lowest, highest, what it means). The AI model is picked in the main window.
 SETTINGS = [("min_fit_score", "Minimum fit score", 0, 100,
              "Auto-draft skips jobs Gemini scores lower than this (0-100). Lower it if too few drafts are made."),
@@ -164,6 +165,12 @@ def cut(s, n):
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
+def where(j):
+    """The job's location with its work type in front, unless the location already says it: 'On-site · Lahore'."""
+    mode, loc = bot.WORK_MODES.get(j.get("mode")), j["location"]
+    return f"{mode} · {loc}" if mode and mode.lower() not in loc.lower() else loc
+
+
 def row(status, source, company, role, last):
     return ROW.format(status, source, cut(company, 26), cut(role, 52), last)
 
@@ -177,7 +184,7 @@ def pretty(line):
             role = role[len(company) + 3:]
         if kind == "CANDIDATE":
             return [(row("READY", src, company, role, last), "ready")], True
-        return [(row("ON SITE", src, company, role, last), "site")], True
+        return [(row("ON WEBSITE", src, company, role, last), "site")], True
     m = re.match(r"skip (.*?): eligible=(\S+) fit=(\S+) ?(.*)$", line)
     if m:
         company, _, fit, reason = m.groups()
@@ -777,8 +784,12 @@ class App(tk.Tk):
         self.kw = tk.StringVar(value=", ".join(cfg.get("keywords") or DEFAULT_KEYWORDS))
         self.excl = tk.StringVar(value=", ".join(cfg.get("exclude_keywords") or []))
         self.age = tk.StringVar(value=str(cfg.get("max_job_age_days") or bot.MAX_AGE_DAYS))
-        self.pk_only = tk.BooleanVar(value=cfg.get("worldwide_only", cfg.get("pakistan_only", True)))
+        modes = bot.work_modes(cfg)
+        self.modes = {m: tk.BooleanVar(value=m in modes) for m in bot.WORK_MODES}
+        self.open_to = tk.StringVar(value=OPEN_TO_LABEL[bot.open_to(cfg)])
         self.region = tk.StringVar(value=", ".join(bot.clean_words(cfg.get("my_region_words"))))
+        self.countries = tk.StringVar(value=", ".join(bot.clean_words(cfg.get("target_countries"))))
+        self.visa = tk.BooleanVar(value=bool(cfg.get("visa_sponsorship")))
         self.google = tk.BooleanVar(value=cfg.get("search_google", True))
         self.title_only = tk.BooleanVar(value=bool(cfg.get("keywords_in_title")))
         self.preset = tk.StringVar()
@@ -802,14 +813,40 @@ class App(tk.Tk):
         w.pack(side="left", padx=(0, 12))
         Tooltip(w, "A keyword must be in the job title. Turn on for broad words like Sales or Finance that "
                    "appear in almost every job ad.")
-        w = c.check(top, "Only open worldwide / to my region", self.pk_only)
-        w.pack(side="left", padx=(0, 4))
-        Tooltip(w, "On: only jobs that hire worldwide or name your country/region. Off: every remote job, "
-                   "including ones limited to the US or Europe.")
-        c.label(top, "My country/region:").pack(side="left", padx=(8, 4))
-        w = ttk.Entry(top, textvariable=self.region, width=22)
+
+        row = c.row(pady=(8, 0))
+        c.label(row, "Work type:").pack(side="left", padx=(0, 4))
+        tips = {"remote": "Work from home, for a company anywhere.",
+                "hybrid": "Some days in the office: the office must be in a place below (or offer a visa).",
+                "onsite": "Every day in the office: the office must be in a place below (or offer a visa)."}
+        for m, name in bot.WORK_MODES.items():
+            w = c.check(row, name, self.modes[m])
+            w.pack(side="left", padx=(0, 8))
+            Tooltip(w, tips[m])
+        c.label(row, "Open to:").pack(side="left", padx=(8, 4))
+        cb = ttk.Combobox(row, textvariable=self.open_to, values=list(OPEN_TO_LABEL.values()), state="readonly",
+                          width=22)
+        cb.pack(side="left", padx=(0, 12))
+        Tooltip(cb, "Worldwide + my country: remote jobs that hire worldwide or name your country; office jobs in "
+                    "your country.\nCountries I pick: the same, for the countries in Countries.\n"
+                    "Any country: no limit (remote jobs for the US only too).")
+        c.label(row, "My country/region:").pack(side="left", padx=(0, 4))
+        w = ttk.Entry(row, textvariable=self.region, width=18)
+        w.pack(side="left", padx=(0, 12))
+        Tooltip(w, "Where you live. Jobs that name one of these count as open to you, e.g.  Pakistan, South Asia, "
+                   "APAC")
+        c.label(row, "Countries:").pack(side="left", padx=(0, 4))
+        self.countries_entry = ttk.Entry(row, textvariable=self.countries, width=22)
+        self.countries_entry.pack(side="left", padx=(0, 12))
+        Tooltip(self.countries_entry, "For Open to: Countries I pick. Countries or regions you would work for or "
+                                      "move to, e.g.  UAE, Saudi Arabia, Germany, Europe. Remote jobs limited to "
+                                      "one of these, and office jobs in them, are kept.")
+        w = c.check(row, "Visa / relocation abroad", self.visa)
         w.pack(side="left")
-        Tooltip(w, "Jobs that name one of these count as open to you, e.g.  Pakistan, South Asia, APAC")
+        Tooltip(w, "Also keep hybrid and on-site jobs in other countries when the post offers visa sponsorship or "
+                   "relocation help.")
+        cb.bind("<<ComboboxSelected>>", lambda e: self.show_open_to())
+        self.show_open_to()
 
         row = c.row(pady=(8, 0))
         c.label(row, "Keywords (any of):").pack(side="left")
@@ -834,6 +871,12 @@ class App(tk.Tk):
         self.busy_buttons.append(b)
         self.show_preset()
         self.kw.trace_add("write", lambda *a: self.show_preset())
+
+    def open_to_key(self):
+        return next(k for k, v in OPEN_TO_LABEL.items() if v == self.open_to.get())
+
+    def show_open_to(self):
+        self.countries_entry.state(["!disabled"] if self.open_to_key() == "countries" else ["disabled"])
 
     def picked_types(self):
         """The ticked job types, or [] once the keywords are your own."""
@@ -1007,7 +1050,7 @@ class App(tk.Tk):
         if j["status"] in ("done", "rejected") and j.get("why"):
             status = f"{status[:1]} {j['why']}"
         return (status, MATCH_LABEL.get(j.get("match"), ""), ago(j.get("date")), j["company"], j["title"],
-                j["location"][:60], j.get("salary", ""))
+                where(j)[:60], j.get("salary", ""))
 
     def fill_table(self):
         keep = self.tree.selection()
@@ -1050,9 +1093,13 @@ class App(tk.Tk):
         """What loosening the filter would add: jobs that match your keywords but were left out for age or place."""
         near = [j for j in self.jobs if j["status"] == bot.STATUS_REJECTED and j.get("match")]
         old = sum(j["why"] == "too old" for j in near)
-        place = sum(j["why"].startswith(("not open", "location/work-auth")) for j in near)
+        place = sum(j["why"].startswith(("not open", "location/work-auth")) or " outside " in j["why"]
+                    for j in near)
+        kind = {m: sum(j["why"] == f"{name.lower()} job" for j in near) for m, name in bot.WORK_MODES.items()}
         tips = ([f"{old} more are older than {self.age.get()} days (raise Max age)"] if old else []) + \
-               ([f"{place} more are limited to other countries (untick Only open worldwide)"] if place else [])
+               ([f"{place} more are limited to other countries (Open to: Any country, or Countries I pick)"]
+                if place else []) + \
+               [f"{n} more are {bot.WORK_MODES[m].lower()} (tick {bot.WORK_MODES[m]})" for m, n in kind.items() if n]
         if not tips:
             return "  ·  Try a Job type, more or shorter keywords, or untick Keywords in title only."
         return "  ·  " + "; ".join(tips) + "."
@@ -1076,7 +1123,7 @@ class App(tk.Tk):
         t.config(state="normal")
         t.delete("1.0", "end")
         t.insert("end", j["title"] + "\n", "h1")
-        t.insert("end", f"{j['company']}  ·  {j['location'][:120]}\n", "h2")
+        t.insert("end", f"{j['company']}  ·  {where(j)[:120]}\n", "h2")
         facts = [("Status", LABEL.get(j["status"], j["status"]) + (f"  ({j['why']})" if j.get("why") else "")),
                  ("Posted", (j.get("date") or "")[:10] + (f"  ({ago(j.get('date'))})" if j.get("date") else "")),
                  ("Salary", j.get("salary", "")), ("Type", j.get("job_type", "")), ("Level", j.get("level", "")),
@@ -1517,23 +1564,35 @@ class App(tk.Tk):
         except ValueError:
             messagebox.showerror("Job filter", "Max age must be a number of days.")
             return False
+        modes = [m for m, v in self.modes.items() if v.get()]
+        if not modes:
+            messagebox.showerror("Job filter", "Tick at least one Work type: Remote, Hybrid or On-site.")
+            return False
+        where = self.open_to_key()
+        if where == "countries" and not words(self.countries):
+            messagebox.showerror("Job filter", "Type the countries you want in Countries, e.g.  UAE, Germany, Europe"
+                                               "\n\nOr pick another Open to.")
+            return False
+        if where == "me" and modes != ["remote"] and not words(self.region) and not self.visa.get():
+            messagebox.showerror("Job filter", "Type your country in My country/region, e.g.  Pakistan\n\n"
+                                               "Hybrid and on-site jobs are kept only if the office is there.")
+            return False
         cfg = read_config()
         picked = self.picked_types()
         fields = combine(picked)[1] if picked else ["all"]
         new = dict(keywords=words(self.kw), exclude_keywords=words(self.excl), max_job_age_days=age,
-                   worldwide_only=self.pk_only.get(), keywords_in_title=self.title_only.get(), job_fields=fields,
-                   job_types=picked, my_region_words=words(self.region), search_google=self.google.get())
-        if any(cfg.get(k) != v for k, v in new.items()):
+                   work_modes=modes, open_to=where, keywords_in_title=self.title_only.get(), job_fields=fields,
+                   job_types=picked, my_region_words=words(self.region), target_countries=words(self.countries),
+                   visa_sponsorship=self.visa.get(), search_google=self.google.get())
+        if any(cfg.get(k) != v for k, v in new.items()) or "worldwide_only" in cfg or "pakistan_only" in cfg:
             cfg.update(new)
             cfg.pop("pakistan_only", None)
+            cfg.pop("worldwide_only", None)
             write_config(cfg)
-            region = ", ".join(new["my_region_words"])
             self.write_log(f"\nFilter saved: {self.preset.get()} | keywords {', '.join(new['keywords'])}"
                            + (" (in title)" if new["keywords_in_title"] else "")
                            + (f" | exclude {', '.join(new['exclude_keywords'])}" if new["exclude_keywords"] else "")
-                           + f" | max age {age} days"
-                           + ((f" | worldwide or {region} only\n" if region else " | worldwide only\n")
-                              if new["worldwide_only"] else " | any country\n"))
+                           + f" | max age {age} days | {bot.wanted_jobs(new)}\n")
         return True
 
     def keys(self, first=False):

@@ -80,7 +80,7 @@ class Prefilter(unittest.TestCase):
 
     def test_hn_post_must_say_remote(self):
         self.assertEqual(bot.prefilter(job(source="hn", location="Berlin | onsite", text="Berlin office"),
-                                       self.now), "not remote")
+                                       self.now), "on-site job")
 
     def test_worldwide_only(self):
         bot.apply_filters(dict(bot.DEFAULT_CONFIG, keywords=["Software Engineer"], my_region_words=["Pakistan"]))

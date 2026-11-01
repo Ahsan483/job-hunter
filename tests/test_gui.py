@@ -151,6 +151,19 @@ class Window(unittest.TestCase):
         self.assertEqual(cfg["gemini_api_key"], "AIza-test")  # the keys are kept
         self.assertEqual(self.run_bot.call_args.args[0], ["--dry-run"])
 
+    def test_work_type_and_countries_are_saved(self):
+        self.app.modes["onsite"].set(True)
+        self.app.open_to.set(gui.OPEN_TO_LABEL["countries"])
+        self.app.find_jobs()
+        self.run_bot.assert_not_called()  # Countries is empty: says so instead of searching
+        self.app.countries.set("UAE, Germany")
+        self.app.visa.set(True)
+        self.app.find_jobs()
+        cfg = self.config()
+        self.assertEqual((cfg["work_modes"], cfg["open_to"], cfg["target_countries"], cfg["visa_sponsorship"]),
+                         (["remote", "onsite"], "countries", ["UAE", "Germany"], True))
+        self.assertNotIn("worldwide_only", cfg)
+
     def test_job_type_fills_keywords(self):
         self.app.types["Finance / Accounting"].set(True)
         self.app.use_preset()

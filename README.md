@@ -1,6 +1,6 @@
 # Job Hunter: Free AI Remote Job Search Bot (Python, Gemini, Gmail Drafts)
 
-**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 16 job sources at once (plus Google, for LinkedIn and Indeed posts), filters by your keywords, job age and region ("only open to Pakistan / worldwide"), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
+**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 16 job sources at once (plus Google, for LinkedIn and Indeed posts), filters by your keywords, job age, work type (remote, hybrid, on-site) and where the job is open (worldwide, your country, countries you pick, or with visa sponsorship), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
 
 [![Download for Windows](https://img.shields.io/badge/download-JobHunterSetup.exe-2563eb.svg)](https://github.com/Ahsan483/job-hunter/releases/latest/download/JobHunterSetup.exe)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -138,8 +138,11 @@ Set these in the **Job filter** bar (then press **Save & search**) or in `config
 | Exclude in title (`exclude_keywords`) | Skip jobs with these words in the title | `Intern, PHP` |
 | Max age (`max_job_age_days`) | Ignore older posts | `30` |
 | Search Google too (`search_google`) | Gemini searches Google for LinkedIn, Indeed, Glassdoor and company-site posts (one request every 4 hours at most) | on |
-| Only open worldwide / to my region (`worldwide_only`) | On: only jobs that hire worldwide or in your region. Off: any remote job | on |
-| My country/region (`my_region_words`) | Your country/region. Posts naming these count as open to you | `Pakistan, South Asia` |
+| Work type (`work_modes`) | Kinds of work to keep: **Remote**, **Hybrid**, **On-site** (tick several). Each job is marked with its work type in the list | `Remote` |
+| Open to (`open_to`) | **Worldwide + my country** (`me`): remote jobs that hire worldwide or name your country, office jobs in your country. **Countries I pick** (`countries`): the same for the countries in *Countries*. **Any country** (`anywhere`): no limit | Worldwide + my country |
+| My country/region (`my_region_words`) | Where you live. Posts naming these count as open to you | `Pakistan, South Asia` |
+| Countries (`target_countries`) | For *Countries I pick*: countries or regions you would work for or move to | `UAE, Saudi Arabia, Germany` |
+| Visa / relocation abroad (`visa_sponsorship`) | Also keep hybrid and on-site jobs in other countries when the post offers visa sponsorship or relocation help | off |
 | Skip jobs asking for (years) (`max_years_required`, in Settings) | Skip jobs asking for this many years or more (`0` = off) | `8` |
 | `job_fields` (config.json) | We Work Remotely categories to read: `software`, `devops`, `design`, `sales & marketing`, `customer support`, `finance & management`, `product`, `other`, or `all`. Set by **Job type** | `["sales & marketing"]` |
 
@@ -182,7 +185,7 @@ python -I -m unittest discover -s tests   # run the tests (no network needed)
 | Gmail login fails | Use the 16-letter **app password**, not your normal password, and check that IMAP is on. |
 | "every free model is out of quota" | Gemini's free limit is used up. The log says when it's back, usually within a day. |
 | "model was not found" in `runs.log` | Set `gemini_model` to a current name from https://ai.google.dev/gemini-api/docs/models. |
-| No jobs found | Read the line above the job list: it says how many more jobs a longer max age or any country would give. Add more keywords, raise the max age, or turn off "Only open worldwide / to my region". For non-software jobs, pick a **Job type** so the right job categories are searched. Pick **Show: Everything** to see why each job was left out. |
+| No jobs found | Read the line above the job list: it says how many more jobs a longer max age or any country would give. Add more keywords, raise the max age, or set **Open to** to *Any country*. For non-software jobs, pick a **Job type** so the right job categories are searched. Pick **Show: Everything** to see why each job was left out. |
 
 ## Files
 
@@ -215,7 +218,10 @@ Yes. The code is MIT-licensed. It uses the free tier of the Google Gemini API, a
 Not with the [Windows installer](#download-for-windows-easiest). Running from source needs Python 3.10+.
 
 **Can it find remote jobs for Pakistan, India or other regions?**
-Yes. Tick **Only open worldwide / to my region** and type your country or region in **My country/region** (for example `Pakistan, South Asia`). Jobs that name your region, or that are open worldwide, are kept.
+Yes. Set **Open to** to *Worldwide + my country* and type your country or region in **My country/region** (for example `Pakistan, South Asia`). Remote jobs that name your region, or that are open worldwide, are kept.
+
+**Can it find on-site or hybrid jobs, or jobs in other countries?**
+Yes. Tick **On-site** and/or **Hybrid** under **Work type**. With *Worldwide + my country* you get office jobs in your own country; pick *Countries I pick* and type e.g. `UAE, Germany` for jobs there (remote jobs limited to those countries too). Tick **Visa / relocation abroad** to also keep office jobs anywhere whose post offers visa sponsorship or relocation. Most free job feeds list remote jobs; office jobs come from Arbeitnow, 4 Day Week, company career pages, Hacker News and the Google search.
 
 **Does it apply to jobs automatically or send emails by itself?**
 No. It only creates Gmail **drafts**. You read each one and press Send.

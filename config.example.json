@@ -1,8 +1,8 @@
 {
-  "gmail_address": "PUT-GMAIL-ADDRESS-HERE",
-  "gmail_app_password": "PUT-GMAIL-APP-PASSWORD-HERE",
+  "gmail_address": "sarfrazprince065@gmail.com",
+  "gmail_app_password": "ihln jixn opxo gwrs",
   "imap_host": "imap.gmail.com",
-  "gemini_api_key": "PUT-GEMINI-API-KEY-HERE",
+  "gemini_api_key": "AQ.Ab8RN6LA-BuJi8rFzJMcd0iDwqTe9WeihDktISQt2Z53J4O_8g",
   "gemini_model": "gemini-flash-latest",
   "max_drafts_per_run": 3,
   "max_drafts_per_day": 20,

@@ -53,7 +53,7 @@ HERE = os.environ.get("JOBHUNTER_HOME") or (
     else os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(HERE, exist_ok=True)
 CODE = os.path.dirname(os.path.abspath(__file__))  # bot.py and cv.py
-VERSION = "1.4.2"  # installer/build.ps1 checks that the release tag matches
+VERSION = "1.4.3"  # installer/build.ps1 checks that the release tag matches
 REPO = "Ahsan483/job-hunter"
 UA = {"User-Agent": f"Mozilla/5.0 (compatible; JobHunter/{VERSION}; +https://github.com/{REPO})"}
 MIN_GAP = 1.5  # seconds between two requests to the same site
@@ -463,6 +463,45 @@ def slug(s):
 
 # ---------- sources ----------
 
+class SourceSkipped(Exception):
+    """A source deliberately not searched this run (for example Google without billing). Not a fault:
+    the message says why in plain words and the window shows it as a note, not an error."""
+
+
+SOURCE_LABELS = {
+    "remotive": "Remotive", "remoteok": "RemoteOK", "arbeitnow": "Arbeitnow", "himalayas": "Himalayas",
+    "jobicy": "Jobicy (by keyword)", "jobicy_feed": "Jobicy (new jobs)", "weworkremotely": "We Work Remotely",
+    "workingnomads": "Working Nomads", "hn": "Hacker News hiring", "remotefirstjobs": "Remote First Jobs",
+    "realworkfromanywhere": "Real Work From Anywhere", "workew": "Workew", "4dayweek": "4 Day Week",
+    "companies": "Company career pages", "google": "Google Search",
+}
+
+
+def source_label(src):
+    """'src_weworkremotely' -> 'We Work Remotely'."""
+    name = getattr(src, "__name__", str(src)).removeprefix("src_")
+    return SOURCE_LABELS.get(name, name)
+
+
+def explain_problem(e):
+    """Why a site could not be searched, in words a job seeker understands (no HTTP codes or class names)."""
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code in (404, 410):
+            return "the site has moved or closed its job feed"
+        if e.code in (401, 403):
+            return "the site is not accepting automatic searches right now"
+        if e.code == 429:
+            return "the site asked Job Hunter to slow down; it is searched again on the next run"
+        if e.code >= 500:
+            return "the site is having problems on its side right now"
+        return "the site turned the request down"
+    if isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)):
+        return "could not connect; check your internet connection, or the site may be down"
+    if isinstance(e, ValueError):
+        return "the site sent a reply Job Hunter could not read"
+    return "an unexpected problem"
+
+
 def money(lo, hi, cur="USD", period=""):
     def n(v):
         try:
@@ -566,7 +605,7 @@ def src_jobicy():
         try:
             d = fetch(f"https://jobicy.com/api/v2/remote-jobs?count=50&tag={q(tag)}", as_json=True)
         except urllib.error.HTTPError as e:
-            log(f"  jobicy tag '{tag}': HTTP {e.code}, skipped")
+            log(f"  Jobicy: keyword '{tag}' could not be searched ({explain_problem(e)}); the other keywords were")
             continue
         for j in d.get("jobs", []):
             out.append(dict(source="jobicy", id=f"jobicy-{j['id']}", title=html.unescape(j["jobTitle"]),
@@ -661,23 +700,6 @@ def src_jobicy_feed():
                         salary=money(it.get("job_listing:salary_min"), it.get("job_listing:salary_max"),
                                      it.get("job_listing:salary_currency"), it.get("job_listing:salary_period")),
                         geo_strict=True))
-    return out
-
-
-def src_themuse():
-    out = []
-    for page in range(5):
-        d = fetch("https://www.themuse.com/api/public/jobs?location=Flexible%20%2F%20Remote&descending=true"
-                  f"&page={page}", as_json=True)
-        for j in d.get("results", []):
-            out.append(dict(source="themuse", id=f"themuse-{j['id']}", title=j.get("name", "").strip(),
-                            company=(j.get("company") or {}).get("name", ""),
-                            url=(j.get("refs") or {}).get("landing_page", ""),
-                            location=", ".join(x["name"] for x in j.get("locations") or []) or "Remote",
-                            text=text_of(j.get("contents")), date=parse_date(j.get("publication_date")),
-                            level=", ".join(x["name"] for x in j.get("levels") or [])))
-        if page + 1 >= d.get("page_count", 0):
-            break
     return out
 
 
@@ -793,18 +815,16 @@ def src_google():
     if cached.get("ask") == ask and time.time() - cached.get("at", 0) < GOOGLE_TTL:
         found = cached.get("jobs", [])
     elif cached.get("refused_until", 0) > time.time():
-        return []  # this key has no Google Search quota: asked again once a day, not every run
+        raise SourceSkipped(GOOGLE_NEEDS_BILLING)  # asked again once a day, not every run
     else:
         try:
             res = gemini(GOOGLE, prompt, search=True)
         except RuntimeError as e:
             if NO_SEARCH not in str(e):
                 raise
-            log(f"  {NO_SEARCH} (Google wants billing turned on for it). The other job sites were searched as usual; "
-                "Job Hunter tries Google again tomorrow. Untick Search Google too to stop trying.")
             with open(GOOGLE_CACHE, "w", encoding="utf-8") as f:
                 json.dump({"refused_until": time.time() + 86400}, f)
-            return []
+            raise SourceSkipped(GOOGLE_NEEDS_BILLING) from None
         sites = {s.lower().removeprefix("www.") for s in res.get("_sites", []) if s}
         found = []
         for j in res.get("jobs") or []:
@@ -832,7 +852,7 @@ def src_companies():
             try:
                 out += f.result()
             except Exception as e:  # one company's page moving must not lose the others
-                log(f"  a company career page failed ({e.__class__.__name__}), skipped")
+                log(f"  one company's career page could not be read ({explain_problem(e)}); the others were searched")
     return out
 
 
@@ -869,8 +889,9 @@ def src_hn():
     return out
 
 
+# The Muse was removed in 1.4.3: its public jobs API now answers 403/404 for every request.
 SOURCES = [src_remotive, src_remoteok, src_arbeitnow, src_himalayas, src_jobicy, src_jobicy_feed, src_weworkremotely,
-           src_workingnomads, src_hn, src_themuse, src_remotefirstjobs, src_realworkfromanywhere, src_workew,
+           src_workingnomads, src_hn, src_remotefirstjobs, src_realworkfromanywhere, src_workew,
            src_4dayweek, src_companies, src_google]
 
 
@@ -1128,6 +1149,8 @@ NOT_TEXT_MODEL = re.compile(r"(tts|image|banana|live|audio|transcribe|robotics|c
                             r"|deep-research|lyria|omni|customtools|argon|aqa)", re.I)
 NO_MODEL = "No Gemini model is available"
 NO_SEARCH = "Google Search is not in your Gemini key's free quota"
+GOOGLE_NEEDS_BILLING = ("free Gemini keys cannot use Google Search (it needs billing turned on). Nothing is wrong; "
+                        "untick Search Google too to hide this note")
 
 
 def gemini_state():
@@ -1628,12 +1651,19 @@ def collect(rows, now, today, notes):
         running = {pool.submit(src): src for src in SOURCES}
         for f in as_completed(running):
             src = running[f]
+            name = f"{src.__name__} ({source_label(src)})"
             try:
                 got[src] = f.result()
-                log(f"{src.__name__}: {len(got[src])} jobs")
-            except Exception as e:
-                notes.append(f"{src.__name__} failed ({e.__class__.__name__})")
-                log(f"{src.__name__}: ERROR {e}")
+                if src is not src_google or GOOGLE:  # Google switched off is not "0 jobs found"
+                    log(f"{name}: {len(got[src])} jobs")
+            except SourceSkipped as e:
+                log(f"SKIPPED {name}: {e}")
+            except Exception as e:  # one site failing must never stop the search; say why in plain words
+                reason = explain_problem(e)
+                notes.append(f"{source_label(src)} not searched ({reason})")
+                # The technical detail is printed for anyone running bot.py in a terminal; the window hides it.
+                log(f"NOT SEARCHED {name}: {reason}. The other sites were searched as usual. "
+                    f"[details: {e.__class__.__name__}: {e}]")
     jobs = [j for src in SOURCES for j in got.get(src, [])]  # in SOURCES order, so duplicates resolve the same way
     out, seen, matches = [], set(), []
     for j in jobs:

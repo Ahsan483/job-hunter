@@ -197,9 +197,20 @@ def pretty(line):
     if m:
         company, mail, fit = m.groups()
         return [(row("DRAFTED", "gemini", company, f"fit {fit}", mail), "good")], True
-    m = re.match(r"src_(\w+): (\d+) jobs$", line)
+    m = re.match(r"src_(\w+)(?: \((.*?)\))?: (\d+) jobs$", line)
     if m:
-        return [(f"  {m.group(1):<18}{m.group(2):>5} jobs\n", "dim")], False
+        name, label, count = m.groups()
+        hint = "   (none right now for this search)" if count == "0" else ""
+        return [(f"  {label or name:<26}{count:>5} jobs{hint}\n", "dim")], False
+    # A site that could not be searched: plain reason, technical details hidden.
+    m = re.match(r"NOT SEARCHED src_(\w+)(?: \((.*?)\))?: (.*?)(?: \[details: .*\])?$", line)
+    if m:
+        name, label, reason = m.groups()
+        return [(f"  {label or name:<26}not searched: {reason}\n", "skip")], False
+    m = re.match(r"SKIPPED src_(\w+)(?: \((.*?)\))?: (.*)$", line)
+    if m:
+        name, label, reason = m.groups()
+        return [(f"  {label or name:<26}skipped: {reason}\n", "dim")], False
     m = re.match(r"filter: (\{.*\})$", line)
     if m:
         try:
@@ -215,7 +226,7 @@ def pretty(line):
         text = f"  ■ Finished {at}:  {fetched} jobs checked  ·  {cands} with email"
         text += "  (search only)" if dry else f"  ·  {gem} asked Gemini  ·  {drafts} drafts saved"
         out = [(text + "\n", "summary")]
-        return out + ([(f"  Notes: {notes}\n", "err")] if notes else []), False
+        return out + ([(f"  Heads-up: {notes}\n", "skip")] if notes else []), False
     tag = "err" if "ERROR" in line or "failed" in line.lower() else "good" if " saved" in line else None
     return [(f"  {line}\n", tag)], False
 
@@ -1340,7 +1351,7 @@ class App(tk.Tk):
     def find_jobs(self):
         if self.save_filter():
             self.search.set("")
-            self.run_bot(["--dry-run"], "Searching 16 job sources (takes about a minute)")
+            self.run_bot(["--dry-run"], "Searching 15 job sources (takes about a minute)")
 
     def ready_for(self, gmail=False):
         """True when the keys and profile a Gemini action needs are there; otherwise opens what is missing.

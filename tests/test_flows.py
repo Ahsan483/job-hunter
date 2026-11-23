@@ -159,7 +159,7 @@ class FullRun(Sandbox):
         with mock.patch.object(bot, "SOURCES", [broken, lambda: [posting(1)]]), \
                 mock.patch.object(sys, "argv", ["bot.py", "--dry-run"]):
             bot.main()
-        self.assertIn("broken failed (ValueError)", self.read("runs.log"))
+        self.assertIn("broken not searched (the site sent a reply Job Hunter could not read)", self.read("runs.log"))
         self.assertIn("remotive-1", self.jobs())
 
     def test_busy_lock_refuses_a_second_run(self):

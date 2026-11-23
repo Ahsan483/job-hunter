@@ -253,6 +253,25 @@ class LogLines(unittest.TestCase):
         self.assertIn("826 jobs checked", pieces[0][0])
         self.assertEqual(gui.pretty("ERROR: boom")[0][0][1], "err")
 
+    def test_source_lines_use_readable_names_and_hide_technical_details(self):
+        text, tag = gui.pretty("src_weworkremotely (We Work Remotely): 218 jobs")[0][0]
+        self.assertIn("We Work Remotely", text)
+        self.assertIn("218 jobs", text)
+        self.assertIn("none right now", gui.pretty("src_jobicy (Jobicy (by keyword)): 0 jobs")[0][0][0])
+        text, tag = gui.pretty("NOT SEARCHED src_remoteok (RemoteOK): the site is having problems on its side right "
+                               "now. The other sites were searched as usual. [details: HTTPError: HTTP Error 502]")[0][0]
+        self.assertEqual(tag, "skip")  # amber note, not a red error
+        self.assertIn("RemoteOK", text)
+        self.assertNotIn("HTTP", text)
+        self.assertNotIn("ERROR", text)
+        text, tag = gui.pretty("SKIPPED src_google (Google Search): free Gemini keys cannot use Google Search")[0][0]
+        self.assertEqual(tag, "dim")
+        self.assertIn("skipped", text)
+        pieces, _ = gui.pretty("2026-11-24 02:29 | standalone dry-run | fetched 10 | candidates 0 | gemini 0 | "
+                               "drafts 0 | RemoteOK not searched (the site is having problems on its side right now)")
+        self.assertEqual(pieces[1][1], "skip")
+        self.assertNotIn("failed", pieces[1][0])
+
 
 if __name__ == "__main__":
     unittest.main()

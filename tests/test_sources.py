@@ -187,14 +187,6 @@ class Parsers(unittest.TestCase):
         j = self.run_source(bot.src_jobicy_feed, {"jobicy": rss(item)})[0]
         self.assertEqual((j["id"], j["company"], j["location"]), ("jobicy-157809", "Thumbtack", "USA"))
 
-    def test_themuse(self):
-        page = {"page_count": 1, "results": [{"id": 7, "name": " PM ", "company": {"name": "Atlassian"},
-                                              "refs": {"landing_page": "https://themuse.example/7"},
-                                              "locations": [{"name": "Flexible / Remote"}], "contents": "<p>Hi</p>",
-                                              "publication_date": "2026-10-27T10:00:00Z", "levels": []}]}
-        j = self.run_source(bot.src_themuse, {"themuse": page})[0]
-        self.assertEqual((j["title"], j["company"], j["location"]), ("PM", "Atlassian", "Flexible / Remote"))
-
     def test_4dayweek_keeps_remote_jobs_only(self):
         page = {"has_more": False, "jobs": [
             {"id_str": "a", "title": "Dev", "company_name": "W", "url": "https://4dw.example/a", "is_remote": True,
@@ -262,8 +254,9 @@ class Google(unittest.TestCase):
 
     def test_key_without_search_quota_is_left_alone_for_a_day(self):
         with mock.patch.object(bot, "gemini", side_effect=RuntimeError(bot.NO_SEARCH)) as ask:
-            self.assertEqual(bot.src_google(), [])
-            self.assertEqual(bot.src_google(), [])
+            for _ in range(2):  # a plain note, not an error, and Gemini is asked only once a day
+                with self.assertRaisesRegex(bot.SourceSkipped, "needs billing"):
+                    bot.src_google()
         self.assertEqual(ask.call_count, 1)
 
     def test_off_without_key_or_when_unticked(self):

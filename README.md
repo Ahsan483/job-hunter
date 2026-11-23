@@ -1,6 +1,6 @@
 # Job Hunter: Free AI Remote Job Search Bot (Python, Gemini, Gmail Drafts)
 
-**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 16 job sources at once (plus Google, for LinkedIn and Indeed posts), filters by your keywords, job age, work type (remote, hybrid, on-site) and where the job is open (worldwide, your country, countries you pick, or with visa sponsorship), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
+**Job Hunter** is a free, open-source **remote job search bot with a desktop GUI** for Windows. It searches 14 job sources at once (plus Google, for LinkedIn and Indeed posts), filters by your keywords, job age, work type (remote, hybrid, on-site) and where the job is open (worldwide, your country, countries you pick, or with visa sponsorship), finds the **recruiter or company email**, and uses **Google Gemini (free tier)** to write a **tailored ATS-friendly CV (PDF), cover letter and application email** for each job, in any field: software, finance, sales, SEO, support, design, writing, HR and more. It then saves the email as a **Gmail draft**. It never sends anything on its own: you read each draft and press Send yourself.
 
 [![Download for Windows](https://img.shields.io/badge/download-JobHunterSetup.exe-2563eb.svg)](https://github.com/Ahsan483/job-hunter/releases/latest/download/JobHunterSetup.exe)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -17,7 +17,7 @@ Good for developers and freelancers looking for **remote jobs from Pakistan, Ind
 
 ## Features
 
-- **Searches 16 job sources at once:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads, The Muse, Remote First Jobs, Real Work From Anywhere, 4 Day Week, Workew, the Hacker News "Who is hiring?" thread, and the career pages of 28 remote-first companies (GitLab, Stripe, Mozilla, Supabase, 1Password and more).
+- **Searches 14 job sources at once:** Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads, Remote First Jobs, Real Work From Anywhere, 4 Day Week, Workew, the Hacker News "Who is hiring?" thread, and the career pages of 28 remote-first companies (GitLab, Stripe, Mozilla, Supabase, 1Password and more).
 - **Google search too:** Gemini searches Google for posts on LinkedIn, Indeed, Glassdoor and company sites. Only links Google really returned are kept. One Gemini request every 4 hours at most.
 - **Any kind of remote job:** pick a job type (Finance / Accounting, Sales, SEO / Marketing, Customer support, Design, Writing, Data, HR, Virtual assistant, Project management, Software) or type your own keywords.
 - **Smart, forgiving filter:** "fullstack", "full stack" and "Full-Stack" are the same; small typos are fine; a job that matches part of your keywords is shown as a **partial match** under the strong ones. Posts that don't say where they hire are kept and marked. When results are few, the window says what to loosen ("15 more are older than 10 days").
@@ -205,7 +205,7 @@ The installed app keeps the files that are not uploaded in `%APPDATA%\Job Hunter
 
 ## Job sources and credits
 
-Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com), [The Muse](https://www.themuse.com), [Remote First Jobs](https://remotefirstjobs.com), [Real Work From Anywhere](https://www.realworkfromanywhere.com), [4 Day Week](https://4dayweek.io), [Workew](https://workew.com), [Hacker News](https://news.ycombinator.com), the public job APIs of company career pages on Greenhouse, Ashby and Lever, and Google search through Gemini. Every job links back to its original post. Please apply through those links and support these sites.
+Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com), [Remote First Jobs](https://remotefirstjobs.com), [Real Work From Anywhere](https://www.realworkfromanywhere.com), [4 Day Week](https://4dayweek.io), [Workew](https://workew.com), [Hacker News](https://news.ycombinator.com), the public job APIs of company career pages on Greenhouse, Ashby and Lever, and Google search through Gemini. Every job links back to its original post. Please apply through those links and support these sites.
 
 Job Hunter does not scrape LinkedIn, Indeed or Google directly: their terms and robots.txt forbid it and they block bots. It finds their posts through Gemini's Google Search instead. To stay polite, the bot only reads sites that allow it, pauses between requests to the same site, backs off when a site says it's busy, checks robots.txt before reading company career pages, and fetches Remotive at most every 6 hours, as its API terms ask.
 
@@ -230,7 +230,7 @@ No. It only creates Gmail **drafts**. You read each one and press Send.
 Gemini is told to use only facts from your `profile.json`, and the bot drops reworded lines that add tools or numbers your profile does not contain. Always read the result before you send it.
 
 **Which job sites does it search?**
-Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads, The Muse, Remote First Jobs, Real Work From Anywhere, 4 Day Week, Workew, the Hacker News "Who is hiring?" thread, and the career pages of 28 remote-first companies (GitLab, Stripe, Mozilla, Supabase, 1Password and more). With **Search Google too** on, Gemini also finds posts on LinkedIn, Indeed, Glassdoor and company sites.
+Remotive, RemoteOK, Arbeitnow, Himalayas, Jobicy, We Work Remotely, Working Nomads, Remote First Jobs, Real Work From Anywhere, 4 Day Week, Workew, the Hacker News "Who is hiring?" thread, and the career pages of 28 remote-first companies (GitLab, Stripe, Mozilla, Supabase, 1Password and more). With **Search Google too** on, Gemini also finds posts on LinkedIn, Indeed, Glassdoor and company sites.
 
 **Does it work on Mac or Linux?**
 Currently it targets Windows 10/11 (the GUI, the scheduled task and the Edge PDF export are Windows-specific). Pull requests for other systems are welcome.

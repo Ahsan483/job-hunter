@@ -7,7 +7,7 @@ const brand: MantineColorsTuple = [
 
 // Neutral greys for the dark theme (no blue tint): reads like a native Windows app.
 const dark: MantineColorsTuple = [
-  '#e4e4e7', '#c4c4c8', '#9d9da3', '#77777e', '#4a4a50', '#3a3a3f', '#2c2c30', '#232326', '#1b1b1e', '#141416',
+  '#f2f2f4', '#d9d9de', '#b4b4bc', '#8e8e98', '#5a5a63', '#3f3f46', '#2f2f35', '#242429', '#1c1c20', '#141417',
 ];
 
 export const theme = createTheme({

@@ -11,14 +11,14 @@
   --jh-text: #1f1f23;
 }
 [data-mantine-color-scheme='dark'] {
-  --jh-bg: #1b1b1e;
-  --jh-panel: #232326;
-  --jh-subtle: #1f1f22;
-  --jh-line: #36363b;
-  --jh-hover: #2b2b2f;
-  --jh-selected: #24324a;
-  --jh-dim: #9d9da3;
-  --jh-text: #e4e4e7;
+  --jh-bg: #18181b;
+  --jh-panel: #222226;
+  --jh-subtle: #1d1d21;
+  --jh-line: #38383f;
+  --jh-hover: #2c2c32;
+  --jh-selected: #1f3352;
+  --jh-dim: #b4b4bc;
+  --jh-text: #f2f2f4;
 }
 
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
@@ -86,7 +86,7 @@ input, textarea, .job-text, .log-text, .fact { user-select: text; }
 .job-text p:last-child { margin-bottom: 0; }
 .step { cursor: pointer; transition: border-color 120ms, background 120ms; background: var(--jh-panel); }
 .step:hover:not(.done) { border-color: var(--mantine-color-brand-5); }
-.step.done { cursor: default; background: var(--jh-subtle); }
+.step.done { cursor: default; }
 
 /* ---------- activity ---------- */
 .activity { display: flex; flex-direction: column; height: 100%; background: var(--jh-subtle); }

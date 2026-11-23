@@ -58,27 +58,30 @@ function GettingStarted() {
   const done = setup.filter((s) => s.done).length;
   return (
     <ScrollArea className="detail" type="hover">
-      <Stack p="lg" gap="md" maw={640}>
+      <Stack p="xl" gap="md" maw={640}>
         <div>
-          <Title order={3}>Getting started</Title>
-          <Text c="dimmed" size="sm">Pick a job in the list to see it here. New to Job Hunter? Four steps
-            ({done} of {setup.length} done):</Text>
+          <Title order={3}>{done === setup.length ? 'You are all set' : 'Getting started'}</Title>
+          <Text c="dimmed" size="sm" mt={4}>
+            {done === setup.length ? 'Pick a job in the list to see it here.'
+              : `Pick a job in the list to see it here. New to Job Hunter? ${done} of ${setup.length} steps done.`}
+          </Text>
         </div>
-        {setup.map((s, i) => {
+        {setup.map((s) => {
           const Icon = icon[s.id];
           return (
             <Paper key={s.id} className={`step${s.done ? ' done' : ''}`} p="md" withBorder
               onClick={s.done ? undefined : run[s.id]}>
-              <Group wrap="nowrap" align="flex-start">
-                <ThemeIcon size={36} radius="xl" variant={s.done ? 'filled' : 'light'}>
-                  {s.done ? <IconCheck size={20} /> : <Icon size={19} />}
+              <Group wrap="nowrap" align="center" gap="md">
+                <ThemeIcon size={34} radius="xl" variant="light" color={s.done ? 'green' : 'brand'}>
+                  {s.done ? <IconCheck size={18} stroke={2.5} /> : <Icon size={18} />}
                 </ThemeIcon>
-                <div style={{ flex: 1 }}>
-                  <Text fw={600} td={s.done ? 'line-through' : undefined} c={s.done ? 'dimmed' : undefined}>
-                    {i + 1}. {s.title}</Text>
-                  <Text size="sm" c="dimmed">{s.note}</Text>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Text fw={600} size="md">{s.title}</Text>
+                  <Text size="sm" c="dimmed" mt={2}>{s.note}</Text>
                 </div>
-                {!s.done && <Button size="xs" variant="light" onClick={run[s.id]}>Do it</Button>}
+                {s.done
+                  ? <Badge color="green" variant="light" size="md">Done</Badge>
+                  : <Button size="xs" onClick={run[s.id]}>Set up</Button>}
               </Group>
             </Paper>
           );
@@ -97,7 +100,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   if (!children) return null;
   return (
     <div className="fact">
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>{label}</Text>
+      <Text size="xs" c="dimmed" fw={500}>{label}</Text>
       <Text size="sm">{children}</Text>
     </div>
   );

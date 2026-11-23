@@ -42,7 +42,7 @@ export function ReportDialog() {
         body: JSON.stringify({
           access_key: ACCESS_KEY,
           subject: `Job Hunter ${boot?.version ?? ''} problem report`,
-          from_name: 'Job Hunter app',
+          from_name: 'Job Hunter',
           replyto: email.trim() || undefined,
           email: email.trim() || 'not given',
           message: message.trim(),

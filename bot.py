@@ -58,7 +58,8 @@ REPO = "Ahsan483/job-hunter"
 UA = {"User-Agent": f"Mozilla/5.0 (compatible; JobHunter/{VERSION}; +https://github.com/{REPO})"}
 MIN_GAP = 1.5  # seconds between two requests to the same site
 # Job APIs made for programs to read (company career pages) take requests faster than websites do.
-API_GAP = {"boards-api.greenhouse.io": 0.3, "api.ashbyhq.com": 0.3, "api.lever.co": 0.3}
+API_GAP = {"boards-api.greenhouse.io": 0.3, "api.ashbyhq.com": 0.3, "api.lever.co": 0.3,
+           "api.smartrecruiters.com": 0.3, "jobsearch.api.jobtechdev.se": 0.5}
 REMOTIVE_CACHE = os.path.join(HERE, "remotive_cache.json")
 REMOTIVE_TTL = 6 * 3600  # Remotive asks for at most 4 fetches a day
 TRACKER = os.path.join(HERE, "tracker.csv")
@@ -473,6 +474,8 @@ SOURCE_LABELS = {
     "jobicy": "Jobicy (by keyword)", "jobicy_feed": "Jobicy (new jobs)", "weworkremotely": "We Work Remotely",
     "workingnomads": "Working Nomads", "hn": "Hacker News hiring", "remotefirstjobs": "Remote First Jobs",
     "realworkfromanywhere": "Real Work From Anywhere", "workew": "Workew", "4dayweek": "4 Day Week",
+    "jobspresso": "Jobspresso", "nodesk": "NoDesk", "larajobs": "LaraJobs", "vuejobs": "VueJobs",
+    "remotepython": "Remote Python", "landingjobs": "Landing.jobs (Europe)", "jobtech": "Platsbanken (Sweden)",
     "companies": "Company career pages", "google": "Google Search",
 }
 
@@ -480,6 +483,8 @@ SOURCE_LABELS = {
 def source_label(src):
     """'src_weworkremotely' -> 'We Work Remotely'."""
     name = getattr(src, "__name__", str(src)).removeprefix("src_")
+    if name == "companies":
+        return f"Company career pages ({len(BOARDS)} companies)"
     return SOURCE_LABELS.get(name, name)
 
 
@@ -722,13 +727,143 @@ def src_4dayweek():
     return out
 
 
-# Remote-first companies whose career pages run on Greenhouse, Ashby or Lever: these have public job APIs.
-BOARDS = [("greenhouse", s) for s in ("gitlab", "grafanalabs", "mozilla", "wikimedia", "twilio", "reddit", "coinbase",
-                                      "stripe", "pinterest", "dropbox", "automatticcareers", "datadog", "discord",
-                                      "sourcegraph91", "airtable", "vercel")] + \
-         [("ashby", s) for s in ("supabase", "vanta", "1password", "posthog", "ramp", "zapier", "linear", "sentry",
-                                 "replit")] + \
-         [("lever", s) for s in ("binance", "anchorage", "toptal")]
+def src_jobtech():
+    """Sweden's public employment service (Arbetsförmedlingen), every job posted in Sweden. Searched by keyword."""
+    out, seen = [], set()
+    for term in SEARCH:
+        d = fetch(f"https://jobsearch.api.jobtechdev.se/search?q={q(term)}&limit=100&sort=pubdate-desc", as_json=True)
+        for j in d.get("hits", []):
+            if j["id"] in seen:
+                continue
+            seen.add(j["id"])
+            addr = j.get("workplace_address") or {}
+            apply = j.get("application_details") or {}
+            model = str((j.get("workplace_model") or {}).get("label") or "").lower()
+            out.append(dict(source="jobtech", id=f"jobtech-{j['id']}", title=j.get("headline", ""),
+                            company=(j.get("employer") or {}).get("name", ""), url=j.get("webpage_url", ""),
+                            location=", ".join(filter(None, [addr.get("municipality") or addr.get("city"), "Sweden"])),
+                            mode=("remote" if "distans" in model or "remote" in model else
+                                  "hybrid" if "hybrid" in model else None),
+                            text=text_of((j.get("description") or {}).get("text")) +
+                            (f"\nApply by email: {apply['email']}" if apply.get("email") else ""),
+                            date=parse_date(j.get("publication_date")), apply=apply.get("url") or "",
+                            job_type=((j.get("working_hours_type") or {}).get("label") or ""), any_job=True))
+    return out
+
+
+def src_landingjobs():
+    """Landing.jobs: tech jobs in Portugal and the rest of Europe, many open to remote work."""
+    out = []
+    for offset in (0, 50, 100):
+        d = fetch(f"https://landing.jobs/api/v1/jobs?limit=50&offset={offset}", as_json=True)
+        for j in d:
+            remote = str(j.get("remote")).lower() == "true"
+            places = ", ".join(", ".join(filter(None, [p.get("city"), p.get("country_code")]))
+                               for p in j.get("locations") or [])
+            url = j.get("url", "")
+            out.append(dict(source="landingjobs", id=f"landingjobs-{j['id']}", title=j.get("title", ""),
+                            company=url.split("/at/")[-1].split("/")[0].replace("-", " ").title() if "/at/" in url
+                            else "", url=url, location=", ".join(filter(None, [places, "Remote" if remote else ""])),
+                            mode=office_mode(remote, j.get("title", ""), places),
+                            text="\n".join(text_of(j.get(k)) for k in ("role_description", "main_requirements",
+                                                                        "nice_to_have")),
+                            date=parse_date(j.get("published_at")),
+                            salary=money(j.get("gross_salary_low"), j.get("gross_salary_high"), j.get("currency_code"),
+                                         "year"),
+                            job_type=j.get("type", ""), tags=", ".join(j.get("tags") or [])))
+        if len(d) < 50:
+            break
+    return out
+
+
+def src_jobspresso():
+    out = []
+    for it in rss_items("https://jobspresso.co/feed/?post_type=job_listing"):
+        company, _, where = it.get("dc:creator", "").partition("<br>")
+        link = it.get("link", "")
+        out.append(dict(source="jobspresso", id=f"jobspresso-{last_part(link)}", title=it.get("title", ""),
+                        company=company.strip(), url=link, location=where.strip(" \u26b2\xa0") or "Remote",
+                        text=text_of(it.get("content:encoded") or it.get("description")),
+                        date=parse_date(it.get("pubDate"))))
+    return out
+
+
+def src_nodesk():
+    out = []
+    for it in rss_items("https://nodesk.co/remote-jobs/index.xml"):
+        title, company = title_at_company(it.get("title", ""))
+        out.append(dict(source="nodesk", id=f"nodesk-{last_part(it.get('link', ''))}", title=title, company=company,
+                        url=it.get("link", ""), location="Remote", text=text_of(it.get("description")),
+                        date=parse_date(it.get("pubDate"))))
+    return out
+
+
+def src_larajobs():
+    """Laravel and PHP jobs. The feed has no job texts, so these match on the title."""
+    return [dict(source="larajobs", id=f"larajobs-{last_part(it.get('link', ''))}", title=it.get("title", ""),
+                 company=it.get("job:company", ""), url=it.get("link", ""),
+                 location=it.get("job:location") or "Remote", text=it.get("job:tags", "").replace(",", ", "),
+                 date=parse_date(it.get("pubDate")), salary=it.get("job:salary", ""),
+                 job_type=it.get("job:job_type", "").replace("_", " ").lower(), tags=it.get("job:tags", ""))
+            for it in rss_items("https://larajobs.com/feed")]
+
+
+def src_vuejobs():
+    """VueJobs: front-end and full-stack jobs (Vue, Nuxt, Laravel, Node and more)."""
+    out = []
+    for it in rss_items("https://vuejobs.com/feed"):
+        desc = it.get("description", "")
+        field = lambda name: (re.search(rf"<strong>{name}:</strong>\s*([^<]*)", desc) or [None, ""])[1].strip()
+        link = it.get("guid") or it.get("link", "")
+        out.append(dict(source="vuejobs", id=f"vuejobs-{last_part(link)}", title=it.get("title", ""),
+                        company=field("Employer"), url=link, location=field("Location") or "Remote",
+                        text=text_of(re.sub(r"(?s)<p><strong>(Employer|Location):</strong>.*?</p>", "", desc)),
+                        date=parse_date(it.get("pubDate"))))
+    return out
+
+
+def src_remotepython():
+    out = []
+    for it in rss_items("https://www.remotepython.com/latest/jobs/feed/"):
+        title, company = title_at_company(it.get("title", ""))
+        out.append(dict(source="remotepython", id=f"remotepython-{last_part(it.get('link', ''))}", title=title,
+                        company=company, url=it.get("link", ""), location="Remote",
+                        text=text_of(it.get("description")), date=parse_date(it.get("pubDate"))))
+    return out
+
+
+# Companies whose career pages run on a job system with a public feed (Greenhouse, Ashby, Lever, SmartRecruiters).
+# This is where job sites like Wellfound and HiringCafe get most of their listings; Job Hunter reads them at the
+# source. Each was checked to answer with open jobs (November 2026). Add a company: its job page's address shows the
+# system and the name, e.g. boards.greenhouse.io/<name>, jobs.ashbyhq.com/<name>, jobs.lever.co/<name>,
+# jobs.smartrecruiters.com/<name>.
+BOARDS = [("greenhouse", s) for s in """
+    adyen affirm airbnb airtable algolia anthropic asana attentive automatticcareers binance bitgo bitpanda blockchain
+    brave braze brex bybit cabify calendly canonical celonis chime circleci cloudflare cockroachlabs coinbase consensys
+    contentful coursera databricks datadog deliveroo discord dropbox duolingo elastic fastly figma fireblocks gemini
+    ghost gitlab gocardless grafanalabs gusto hellofresh hootsuite instacart intercom jetbrains khanacademy klaviyo
+    ledgy lyft mattermost mirakl mixpanel mongodb monzo mozilla n26 netlify newrelic okta okx pagerduty pinterest
+    planetscale reddit riotgames ripple robinhood roblox scaleai smartsheet sourcegraph91 sproutsocial squarespace
+    storyblok stripe sumup tailscale trivago turing twilio twitch typeform vercel vonage wallapop wikimedia wolt
+    """.split()] + [("ashby", s) for s in """
+    1password alan alchemy amplitude andela babbel backmarket circle clickup close cohere docker doctolib fullstory
+    getyourguide gitbook hostinger kong ledger linear mintlify miro mollie n8n notion openai oyster perplexity plaid
+    posthog qonto railway ramp render replit sanity sentry snyk supabase temporal terminal uniswap vanta webflow zapier
+    """.split()] + [("lever", s) for s in """
+    anchorage blablacar contentsquare crypto jobandtalent kinsta neon palantir spotify swile toptal
+    """.split()] + [("smartrecruiters", s) for s in ("Canva", "DeliveryHero", "Freshworks", "Wise")]
+
+# Ashby and Lever give no company name, only the board's.
+COMPANY_NAMES = {
+    "1password": "1Password", "andela": "Andela", "backmarket": "Back Market", "clickup": "ClickUp",
+    "getyourguide": "GetYourGuide", "gitbook": "GitBook", "n8n": "n8n", "openai": "OpenAI", "posthog": "PostHog",
+    "blablacar": "BlaBlaCar", "contentsquare": "Contentsquare", "crypto": "Crypto.com", "jobandtalent": "Jobandtalent",
+    "fullstory": "FullStory", "alchemy": "Alchemy", "terminal": "Terminal", "neon": "Neon",
+}
+
+
+def company_name(board):
+    return COMPANY_NAMES.get(board, board.title())
 
 
 def board_jobs(ats, name):
@@ -749,20 +884,52 @@ def board_jobs(ats, name):
         return out
     if ats == "ashby":
         d = fetch(f"https://api.ashbyhq.com/posting-api/job-board/{name}", as_json=True)
-        return [dict(source="ashby", id=f"ashby-{j['id']}", title=j.get("title", ""), company=name.title(),
+        return [dict(source="ashby", id=f"ashby-{j['id']}", title=j.get("title", ""), company=company_name(name),
                      url=j.get("jobUrl", ""), location=", ".join(filter(None, [
                          j.get("location"), "Remote" if j.get("isRemote") or j.get("workplaceType") == "Remote" else ""])),
                      text=j.get("descriptionPlain", ""), date=parse_date(j.get("publishedAt")),
                      mode=ATS_MODE.get(str(j.get("workplaceType")).lower()),
                      job_type=j.get("employmentType", ""), any_job=True) for j in d.get("jobs", [])]
+    if ats == "smartrecruiters":
+        return smartrecruiters_jobs(name)
     d = fetch(f"https://api.lever.co/v0/postings/{name}?mode=json", as_json=True)
-    return [dict(source="lever", id=f"lever-{j['id']}", title=j.get("text", ""), company=name.title(),
+    return [dict(source="lever", id=f"lever-{j['id']}", title=j.get("text", ""), company=company_name(name),
                  url=j.get("hostedUrl", ""), location=", ".join(filter(None, [
                      (j.get("categories") or {}).get("location"),
                      "Remote" if j.get("workplaceType") == "remote" else ""])),
                  text=f"{j.get('descriptionPlain', '')}\n{j.get('additionalPlain', '')}",
                  date=parse_date(j.get("createdAt")), job_type=(j.get("categories") or {}).get("commitment", ""),
                  mode=ATS_MODE.get(str(j.get("workplaceType")).lower()), any_job=True) for j in d]
+
+
+def smartrecruiters_jobs(name, pages=4):
+    """SmartRecruiters lists 100 jobs a page without their texts; texts are read for matching titles only."""
+    base = f"https://api.smartrecruiters.com/v1/companies/{name}/postings"
+    out, reads = [], 0
+    for page in range(pages):
+        d = fetch(f"{base}?limit=100&offset={page * 100}", as_json=True)
+        for j in d.get("content", []):
+            loc = j.get("location") or {}
+            where = ", ".join(filter(None, [loc.get("city"), (loc.get("country") or "").upper(),
+                                            "Remote" if loc.get("remote") else ""]))
+            mode = "remote" if loc.get("remote") else "hybrid" if loc.get("hybrid") else "onsite"
+            job = dict(source="smartrecruiters", id=f"smartrecruiters-{j['id']}", title=j.get("name", ""),
+                       company=(j.get("company") or {}).get("name") or name, location=where, mode=mode,
+                       url=f"https://jobs.smartrecruiters.com/{name}/{j['id']}", text="",
+                       date=parse_date(j.get("releasedDate")),
+                       job_type=(j.get("typeOfEmployment") or {}).get("label", ""),
+                       level=(j.get("experienceLevel") or {}).get("label", ""), any_job=True)
+            if mode in MODES and reads < 10 and MATCH.score(job["title"]):
+                reads += 1
+                ad = fetch(f"{base}/{j['id']}", as_json=True)
+                sections = (ad.get("jobAd") or {}).get("sections") or {}
+                job["text"] = "\n\n".join(text_of(sec.get("text")) for k, sec in sections.items()
+                                           if k != "companyDescription" and isinstance(sec, dict))
+                job["url"] = ad.get("postingUrl") or job["url"]
+            out.append(job)
+        if (page + 1) * 100 >= d.get("totalFound", 0):
+            break
+    return out
 
 
 # workplaceType as Ashby and Lever write it.
@@ -772,7 +939,7 @@ ATS_MODE = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite", "on-site
 GOOGLE_CACHE = os.path.join(HERE, "google_cache.json")
 GOOGLE_TTL = 4 * 3600  # Auto-run every 30 minutes must not use up the free Gemini quota
 GOOGLE_PROMPT = """Use Google Search to find up to 30 real job postings published in the last {days} days for any of
-these: {terms}. Only {where}. Search LinkedIn, Indeed, Glassdoor, Wellfound, company career pages and other
+these: {terms}. Only {where}. Search LinkedIn, Indeed, Glassdoor, Wellfound, HiringCafe, company career pages and other
 job sites. Only include postings you actually found in the search results, each with the posting's own URL.
 Return ONLY JSON:
 {{"jobs": [{{"title": "", "company": "", "url": "", "location": "as the posting says", "posted": "YYYY-MM-DD or \\"\\"",
@@ -847,7 +1014,7 @@ def src_google():
 
 def src_companies():
     out = []
-    with ThreadPoolExecutor(max_workers=3) as pool:  # one per job system; fetch() spaces requests to each
+    with ThreadPoolExecutor(max_workers=8) as pool:  # fetch() still spaces requests to each job system
         for f in as_completed([pool.submit(board_jobs, ats, name) for ats, name in BOARDS]):
             try:
                 out += f.result()
@@ -892,7 +1059,8 @@ def src_hn():
 # The Muse was removed in 1.4.3: its public jobs API now answers 403/404 for every request.
 SOURCES = [src_remotive, src_remoteok, src_arbeitnow, src_himalayas, src_jobicy, src_jobicy_feed, src_weworkremotely,
            src_workingnomads, src_hn, src_remotefirstjobs, src_realworkfromanywhere, src_workew,
-           src_4dayweek, src_companies, src_google]
+           src_4dayweek, src_jobspresso, src_nodesk, src_larajobs, src_vuejobs, src_remotepython,
+           src_landingjobs, src_jobtech, src_companies, src_google]
 
 
 # ---------- filtering ----------

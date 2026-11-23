@@ -215,7 +215,64 @@ class Parsers(unittest.TestCase):
         self.assertEqual(jobs["greenhouse-2"]["text"], "")           # not read: saves a request
         self.assertEqual(jobs["ashby-x"]["location"], "Remote, Global, Remote")
         self.assertEqual(jobs["lever-y"]["date"].year, 2025)        # milliseconds
+        self.assertEqual(jobs["lever-y"]["company"], "Anchorage")
         self.assertTrue(all(j["any_job"] for j in jobs.values()))
+
+    def test_smartrecruiters(self):
+        bot.apply_filters(dict(bot.DEFAULT_CONFIG, keywords=["Backend Engineer"]))
+        page = {"totalFound": 2, "content": [
+            {"id": "11", "name": "Backend Engineer", "company": {"name": "Wise"}, "releasedDate": "2026-11-20T10:00:00Z",
+             "location": {"city": "London", "country": "gb", "remote": True}, "typeOfEmployment": {"label": "Full-time"}},
+            {"id": "12", "name": "Backend Engineer", "company": {"name": "Wise"}, "releasedDate": "2026-11-20T10:00:00Z",
+             "location": {"city": "Austin", "country": "us", "remote": False}}]}
+        ad = {"postingUrl": "https://jobs.smartrecruiters.com/Wise/11-backend-engineer", "jobAd": {"sections": {
+            "companyDescription": {"text": "About Wise"}, "jobDescription": {"text": "<p>Build APIs</p>"},
+            "qualifications": {"text": "<ul><li>Go</li></ul>"}}}}
+        jobs = self.run_source(lambda: bot.smartrecruiters_jobs("Wise"),
+                               {"postings/11": ad, "smartrecruiters.com/v1/companies/Wise/postings?": page})
+        remote, office = jobs
+        self.assertEqual((remote["company"], remote["location"], remote["mode"]), ("Wise", "London, GB, Remote", "remote"))
+        self.assertEqual(remote["text"], "Build APIs\n\nGo")       # the company blurb is left out
+        self.assertEqual(remote["url"], ad["postingUrl"])
+        self.assertEqual((office["mode"], office["text"]), ("onsite", ""))  # remote only: not read
+
+    def test_country_boards(self):
+        sweden = {"hits": [{"id": "31", "headline": "Python-utvecklare", "employer": {"name": "Acme AB"},
+                            "webpage_url": "https://arbetsformedlingen.se/platsbanken/annonser/31",
+                            "workplace_address": {"municipality": "Stockholm"}, "workplace_model": {"label": "Distans"},
+                            "description": {"text": "Python och Django"}, "publication_date": "2026-11-23T10:00:00",
+                            "application_details": {"email": "jobb@acme.se", "url": None}}]}
+        bot.apply_filters(dict(bot.DEFAULT_CONFIG, keywords=["Python", "Django"]))
+        jobs = self.run_source(bot.src_jobtech, {"jobtechdev.se": sweden})
+        self.assertEqual(len(jobs), 1)                               # the same post under both keywords
+        j = jobs[0]
+        self.assertEqual((j["company"], j["location"], j["mode"]), ("Acme AB", "Stockholm, Sweden", "remote"))
+        self.assertIn("jobb@acme.se", j["text"])                     # the email is used for a draft
+        landing = [{"id": 5, "title": "Java Developer", "url": "https://landing.jobs/at/in-scale/java-developer",
+                    "remote": True, "locations": [{"city": "Lisbon", "country_code": "PT"}],
+                    "role_description": "<p>Spring</p>", "main_requirements": "<ul><li>Java</li></ul>",
+                    "published_at": "2026-11-03T09:00:00Z", "gross_salary_low": 50000, "gross_salary_high": 60000,
+                    "currency_code": "EUR", "tags": ["Java"]}]
+        j = self.run_source(bot.src_landingjobs, {"landing.jobs": landing})[0]
+        self.assertEqual((j["company"], j["location"], j["mode"]), ("In Scale", "Lisbon, PT, Remote", "remote"))
+        self.assertEqual(j["salary"], "50k–60k EUR / year")
+
+    def test_more_rss_boards(self):
+        vue = ("<title>Senior Vue Developer</title><guid>https://vuejobs.com/jobs/acme-senior-vue-developer</guid>"
+               "<description><![CDATA[<p><strong>Employer:</strong> Acme</p>\n<p><strong>Location:</strong> Remote (EU)</p>"
+               "<p>Build the app</p>]]></description><pubDate>Mon, 23 Nov 2026 22:12:56 +0000</pubDate>")
+        j = self.run_source(bot.src_vuejobs, {"vuejobs": rss(vue)})[0]
+        self.assertEqual((j["company"], j["location"], j["text"]), ("Acme", "Remote (EU)", "Build the app"))
+        presso = ("<title>Support Agent</title><link>https://jobspresso.co/job/support-agent-whatnot/</link>"
+                  "<dc:creator><![CDATA[Whatnot<br>⚲\xa0United States]]></dc:creator>"
+                  "<description>Help buyers</description><pubDate>Mon, 23 Nov 2026 21:12:50 +0000</pubDate>")
+        j = self.run_source(bot.src_jobspresso, {"jobspresso": rss(presso)})[0]
+        self.assertEqual((j["company"], j["location"]), ("Whatnot", "United States"))
+        lara = ("<title>Laravel Developer</title><link>https://larajobs.com/job/39</link>"
+                "<job:company>Acme</job:company><job:location>Remote</job:location><job:tags>Laravel,Vue</job:tags>"
+                "<job:salary>$70k</job:salary><pubDate>Mon, 16 Nov 2026 16:51:21 +0000</pubDate>")
+        j = self.run_source(bot.src_larajobs, {"larajobs": rss(lara)})[0]
+        self.assertEqual((j["company"], j["salary"], j["text"]), ("Acme", "$70k", "Laravel, Vue"))
 
 
 class Google(unittest.TestCase):

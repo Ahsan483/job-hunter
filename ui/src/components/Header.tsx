@@ -1,5 +1,6 @@
 import {
-  ActionIcon, Badge, Button, Divider, Group, Menu, Progress, Switch, Text, Tooltip, useMantineColorScheme,
+  ActionIcon, Badge, Button, Divider, Group, Menu, Progress, Switch, Text, Tooltip, UnstyledButton,
+  useMantineColorScheme,
 } from '@mantine/core';
 import {
   IconBook, IconBrandGmail, IconBug, IconChartBar, IconDownload, IconFileText, IconFolder, IconFolderOpen,
@@ -7,7 +8,7 @@ import {
   IconSettings, IconSun, IconUser, IconVolume, IconVolumeOff, IconWorld,
 } from '@tabler/icons-react';
 import {
-  autoDraft, checkUpdate, findJobs, openAbout, openPlace, openReport, openSettings, setAutorun, setPrefs, stopRun, updateNow,
+  autoDraft, checkUpdate, findJobs, openAbout, openCoverage, openPlace, openReport, openSettings, setAutorun, setPrefs, stopRun, updateNow,
 } from '../actions';
 import { setSoundsEnabled, sound } from '../sounds';
 import { busy, useApp } from '../store';
@@ -20,6 +21,7 @@ export function Header() {
   const autorun = useApp((s) => s.autorun);
   const prefs = useApp((s) => s.prefs);
   const update = useApp((s) => s.update);
+  const coverage = useApp((s) => s.boot?.coverage);
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const dark = colorScheme !== 'light';
 
@@ -51,6 +53,17 @@ export function Header() {
           </Tooltip>
         )}
       </Group>
+
+      {coverage && (
+        <Tooltip label="Every search reads all of these at once. Click to see the full list.">
+          <UnstyledButton className="coverage-pill" onClick={openCoverage}>
+            <IconWorld size={16} />
+            <span><b>{coverage.sites}</b> job sites</span>
+            <span className="coverage-plus">+</span>
+            <span><b>{coverage.companies.length}</b> company career pages</span>
+          </UnstyledButton>
+        </Tooltip>
+      )}
 
       <Group gap="xs" wrap="nowrap">
         {update && (

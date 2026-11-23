@@ -18,8 +18,9 @@ export function AboutDialog() {
       <Logo size={64} />
       <div>
         <Text fw={600} size="lg">Job Hunter {boot.version}</Text>
-        <Text size="sm" c="dimmed" mt={4}>Finds remote and local jobs on 15 sites, and writes a tailored CV and
-          cover letter for each with Gemini.</Text>
+        <Text size="sm" c="dimmed" mt={4}>Finds remote and local jobs on {boot.coverage.sites} job sites and
+          {' '}{boot.coverage.companies.length} company career pages, and writes a tailored CV and cover letter for
+          each with Gemini.</Text>
         {/* Shown once the number is worth showing; the real count is always at stats.codeprojectsofficial.com/stats */}
         {users !== null && users >= 100 && (
           <Badge mt="sm" size="lg" variant="light" leftSection={<IconUsers size={14} />}>

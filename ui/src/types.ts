@@ -76,6 +76,14 @@ export interface Boot {
   prefs: Prefs;
   usageStats: boolean;
   sources: number;
+  coverage: Coverage;
+}
+
+/** What one search reads (bot.coverage): job sites by group, and the company career pages. */
+export interface Coverage {
+  sites: number;
+  groups: { name: string; sites: string[] }[];
+  companies: string[];
 }
 
 /** A match reported while the search is still running (bot.show_found). */

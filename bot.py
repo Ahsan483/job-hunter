@@ -853,8 +853,14 @@ BOARDS = [("greenhouse", s) for s in """
     anchorage blablacar contentsquare crypto jobandtalent kinsta neon palantir spotify swile toptal
     """.split()] + [("smartrecruiters", s) for s in ("Canva", "DeliveryHero", "Freshworks", "Wise")]
 
-# Ashby and Lever give no company name, only the board's.
+# Board names that do not read as the company's name (Ashby and Lever give no company name; the window lists them).
 COMPANY_NAMES = {
+    "automatticcareers": "Automattic", "bitgo": "BitGo", "circleci": "CircleCI", "cockroachlabs": "Cockroach Labs",
+    "consensys": "Consensys", "gitlab": "GitLab", "gocardless": "GoCardless", "grafanalabs": "Grafana Labs",
+    "hellofresh": "HelloFresh", "jetbrains": "JetBrains", "khanacademy": "Khan Academy", "mongodb": "MongoDB",
+    "newrelic": "New Relic", "okx": "OKX", "pagerduty": "PagerDuty", "planetscale": "PlanetScale",
+    "riotgames": "Riot Games", "scaleai": "Scale AI", "sourcegraph91": "Sourcegraph", "sproutsocial": "Sprout Social",
+    "sumup": "SumUp", "DeliveryHero": "Delivery Hero", "airbnb": "Airbnb", "bybit": "Bybit",
     "1password": "1Password", "andela": "Andela", "backmarket": "Back Market", "clickup": "ClickUp",
     "getyourguide": "GetYourGuide", "gitbook": "GitBook", "n8n": "n8n", "openai": "OpenAI", "posthog": "PostHog",
     "blablacar": "BlaBlaCar", "contentsquare": "Contentsquare", "crypto": "Crypto.com", "jobandtalent": "Jobandtalent",
@@ -864,6 +870,24 @@ COMPANY_NAMES = {
 
 def company_name(board):
     return COMPANY_NAMES.get(board, board.title())
+
+
+# What the window shows under "What Job Hunter searches", by group. Every job site in SOURCES is in one group.
+SITE_GROUPS = [
+    ("Remote jobs, worldwide", ["remotive", "remoteok", "himalayas", "jobicy", "weworkremotely", "workingnomads",
+                                "remotefirstjobs", "realworkfromanywhere", "workew", "4dayweek", "jobspresso",
+                                "nodesk"]),
+    ("Europe and national job services", ["arbeitnow", "landingjobs", "jobtech"]),
+    ("Developer communities", ["hn", "larajobs", "vuejobs", "remotepython"]),
+]
+
+
+def coverage():
+    """The job sites and company career pages a search reads, for the window. Jobicy's two feeds are one site."""
+    groups = [{"name": g, "sites": [SOURCE_LABELS[n].split(" (")[0] if n.startswith("jobicy") else SOURCE_LABELS[n]
+                                    for n in names]} for g, names in SITE_GROUPS]
+    return {"sites": sum(len(g["sites"]) for g in groups), "groups": groups,
+            "companies": sorted({company_name(b) for _, b in BOARDS}, key=str.lower)}
 
 
 def board_jobs(ats, name):

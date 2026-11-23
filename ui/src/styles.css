@@ -27,6 +27,24 @@ input, textarea, .job-text, .log-text, .fact { user-select: text; }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
 .header { height: 56px; flex-shrink: 0; background: var(--jh-panel); border-bottom: 1px solid var(--jh-line); }
+.coverage-pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+  font-size: 13px; color: var(--mantine-color-brand-8); background: var(--mantine-color-brand-0);
+  border: 1px solid var(--mantine-color-brand-2); min-width: 0; overflow: hidden;
+}
+.coverage-pill:hover { background: var(--mantine-color-brand-1); }
+.coverage-pill b { font-weight: 700; }
+.coverage-plus { opacity: .6; }
+[data-mantine-color-scheme='dark'] .coverage-pill {
+  color: var(--mantine-color-brand-2); background: rgba(63, 131, 245, .14); border-color: rgba(63, 131, 245, .35);
+}
+[data-mantine-color-scheme='dark'] .coverage-pill:hover { background: rgba(63, 131, 245, .22); }
+/* Not enough room next to the buttons: the pill gives way first. */
+@media (max-width: 1360px) { .coverage-pill { display: none; } }
+.coverage-card {
+  cursor: pointer; border: 1px solid var(--mantine-color-brand-2); background: var(--mantine-color-brand-0);
+}
+[data-mantine-color-scheme='dark'] .coverage-card { background: rgba(63, 131, 245, .10); border-color: rgba(63, 131, 245, .3); }
 .main { flex: 1; min-height: 0; }
 .pane { height: 100%; background: var(--jh-panel); }
 .sidebar { height: 100%; background: var(--jh-bg); }

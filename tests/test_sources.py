@@ -218,6 +218,15 @@ class Parsers(unittest.TestCase):
         self.assertEqual(jobs["lever-y"]["company"], "Anchorage")
         self.assertTrue(all(j["any_job"] for j in jobs.values()))
 
+    def test_coverage_lists_every_source(self):
+        searched = {s.__name__.removeprefix("src_") for s in bot.SOURCES} - {"companies", "google", "jobicy_feed"}
+        listed = [n for _, names in bot.SITE_GROUPS for n in names]
+        self.assertEqual(sorted(listed), sorted(searched))  # each once, none forgotten
+        c = bot.coverage()
+        self.assertEqual(c["sites"], len(searched))
+        self.assertEqual(len(c["companies"]), len({bot.company_name(b) for _, b in bot.BOARDS}))
+        self.assertIn("OpenAI", c["companies"])
+
     def test_smartrecruiters(self):
         bot.apply_filters(dict(bot.DEFAULT_CONFIG, keywords=["Backend Engineer"]))
         page = {"totalFound": 2, "content": [

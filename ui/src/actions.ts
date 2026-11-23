@@ -11,6 +11,7 @@ import { SettingsDialog } from './dialogs/SettingsDialog';
 import { TailorDialog } from './dialogs/TailorDialog';
 import { AboutDialog } from './dialogs/AboutDialog';
 import { ReportDialog } from './dialogs/ReportDialog';
+import { CoverageDialog } from './dialogs/CoverageDialog';
 
 const get = useApp.getState;
 
@@ -277,6 +278,10 @@ export function openSettings() {
 export function openReport() {
   modals.closeAll();
   modals.open({ title: 'Report a problem', size: 'lg', children: createElement(ReportDialog) });
+}
+
+export function openCoverage() {
+  modals.open({ title: 'What Job Hunter searches', size: 'xl', children: createElement(CoverageDialog) });
 }
 
 export function openAbout() {

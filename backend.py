@@ -501,7 +501,7 @@ class Api:
             "views": [{"value": k, "label": v[0]} for k, v in VIEWS.items()],
             "profile": self.profile(), "setup": self.setup(), "models": self.models(),
             "autorun": self.autorun_state(), "running": self._running(),
-            "sources": len(bot.SOURCES), "prefs": self.prefs(), "usageStats": cfg.get("usage_stats", True) is not False,
+            "sources": len(bot.SOURCES), "coverage": bot.coverage(), "prefs": self.prefs(), "usageStats": cfg.get("usage_stats", True) is not False,
         }
 
     def filter_state(self, cfg=None):

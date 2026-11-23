@@ -5,10 +5,10 @@ import {
 } from '@mantine/core';
 import {
   IconBan, IconCheck, IconCircleCheckFilled, IconCopy, IconExternalLink, IconFileText, IconFolderOpen, IconMail,
-  IconSearch, IconSparkles, IconUpload, IconBrandGmail,
+  IconSearch, IconSparkles, IconUpload, IconBrandGmail, IconWorld,
 } from '@tabler/icons-react';
 import { api } from '../api';
-import { findJobs, guard, jobAction, openKeys, toastError, toastOk, uploadCv } from '../actions';
+import { findJobs, guard, jobAction, openCoverage, openKeys, toastError, toastOk, uploadCv } from '../actions';
 import { sound } from '../sounds';
 import { busy, useApp } from '../store';
 import type { JobDetail as Job, SetupStep } from '../types';
@@ -56,6 +56,7 @@ function GettingStarted() {
   };
   const icon = { gemini: IconSparkles, cv: IconUpload, find: IconSearch, gmail: IconBrandGmail };
   const done = setup.filter((s) => s.done).length;
+  const coverage = useApp((s) => s.boot?.coverage);
   return (
     <ScrollArea className="detail" type="hover">
       <Stack p="xl" gap="md" maw={640}>
@@ -66,6 +67,22 @@ function GettingStarted() {
               : `Pick a job in the list to see it here. New to Job Hunter? ${done} of ${setup.length} steps done.`}
           </Text>
         </div>
+        {coverage && (
+          <Paper className="coverage-card" p="md" radius="md" onClick={openCoverage}>
+            <Group wrap="nowrap" gap="md">
+              <ThemeIcon size={40} radius="md" variant="filled"><IconWorld size={22} /></ThemeIcon>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text fw={600}>One click searches {coverage.sites} job sites and {coverage.companies.length} company
+                  career pages</Text>
+                <Text size="sm" c="dimmed" mt={2}>Remote boards, national job services and companies like
+                  {' '}{coverage.companies.filter((c) => ['OpenAI', 'Stripe', 'Spotify', 'Canva'].includes(c)).join(', ')}.
+                  Over 17,000 open jobs, checked in about a minute.</Text>
+              </div>
+              <Button size="xs" variant="light" onClick={(e) => { e.stopPropagation(); openCoverage(); }}>
+                See all</Button>
+            </Group>
+          </Paper>
+        )}
         {setup.map((s) => {
           const Icon = icon[s.id];
           return (

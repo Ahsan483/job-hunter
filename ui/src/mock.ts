@@ -23,7 +23,9 @@ const boot: Boot = {
   ],
   models: { options: [{ value: 'gemini-flash-latest', ok: true, status: 'working' }], selected: '',
     note: '1 of 1 models usable right now.', tone: 'dim' },
-  autorun: 'off', running: false, prefs: { sounds: true, theme: 'auto' }, usageStats: true, sources: 15,
+  autorun: 'off', running: false, prefs: { sounds: true, theme: 'auto' }, usageStats: true, sources: 22,
+  coverage: { sites: 19, groups: [{ name: 'Remote jobs, worldwide', sites: ['Remotive', 'RemoteOK'] }],
+    companies: ['Anthropic', 'OpenAI', 'Stripe'] },
 };
 
 const jobs: JobsResult = {

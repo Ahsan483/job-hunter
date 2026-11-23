@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File installer\build.ps1            (version from bot.py)
 #   powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 1.3.0
 #
-# Needs Python 3.10+ and Inno Setup 6 (winget install JRSoftware.InnoSetup).
+# Needs Python 3.10+, Node.js 20+ and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 # GitHub Actions runs this for every v* tag (.github/workflows/release.yml).
 param([string]$Version = "")  # empty: the VERSION in bot.py
 $ErrorActionPreference = "Stop"
@@ -18,12 +18,33 @@ if ($Version -ne "0.0.0" -and $Version -ne $appVersion) {
     throw "Version $Version does not match VERSION = `"$appVersion`" in bot.py. Update bot.py first."
 }
 
-python -m pip install --disable-pip-version-check "pyinstaller==6.20.0"
-if ($LASTEXITCODE) { throw "pip install pyinstaller failed" }
+# The window: the React page in ui/, built to ui/dist and shipped inside the app.
+Push-Location (Join-Path $root "ui")
+try {
+    npm ci --no-audit --no-fund
+    if ($LASTEXITCODE) { throw "npm ci failed" }
+    npm run build
+    if ($LASTEXITCODE) { throw "npm run build failed" }
+} finally { Pop-Location }
+$page = Join-Path $root "ui\dist"
+
+python -m pip install --disable-pip-version-check "pyinstaller==6.20.0" "pywebview==6.2.1"
+if ($LASTEXITCODE) { throw "pip install pyinstaller pywebview failed" }
+
+# Microsoft's WebView2 installer (1-2 MB). The setup runs it only on the rare PC without WebView2
+# (Windows 10 that never got Edge updates); Windows 11 always has it.
+$wv2 = Join-Path $build "MicrosoftEdgeWebview2Setup.exe"
+New-Item -ItemType Directory -Force $build | Out-Null
+Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $wv2 -UseBasicParsing
+$sig = Get-AuthenticodeSignature $wv2
+if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") {
+    throw "The WebView2 installer download is not signed by Microsoft ($($sig.Status))."
+}
 
 # One folder (not --onefile): starts faster and antivirus flags it less often.
 python -m PyInstaller --noconfirm --clean --windowed --onedir --name JobHunter `
-    --icon $icon --add-data "$icon;." `
+    --icon $icon --add-data "$icon;." --add-data "$page;ui\dist" `
+    --exclude-module tkinter `
     --distpath (Join-Path $build "dist") --workpath (Join-Path $build "work") --specpath $build `
     (Join-Path $root "jobhunter.py")
 if ($LASTEXITCODE) { throw "PyInstaller failed" }

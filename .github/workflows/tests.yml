@@ -19,7 +19,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Compile
-        run: python -m py_compile bot.py gui.py cv.py jobhunter.py
+        run: python -m py_compile bot.py backend.py webapp.py cv.py jobhunter.py
 
       - name: Unit tests
         run: python -I -m unittest discover -s tests -v
+
+  window:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Type-check and build the page
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build

@@ -1,2 +1,4 @@
-# Nothing to install: Job Hunter uses only the Python standard library (3.10+).
+# The bot (bot.py, cv.py) uses only the Python standard library (3.10+).
+# The window shows the React page in ui/dist through pywebview (Microsoft Edge WebView2, part of Windows).
 # You also need Microsoft Edge (used to make the PDF CVs).
+pywebview==6.2.1

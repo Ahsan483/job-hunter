@@ -15,12 +15,12 @@ Usage:
   python -I bot.py            normal run (needs config.json)
   python -I bot.py --dry-run  find and filter only; no Gemini, no Gmail
   python -I bot.py --job ID [draft|cv|skip|applied]
-                              act on one job from jobs.json (used by gui.py)
+                              act on one job from jobs.json (used by the window)
   python -I bot.py --custom job.json
                               CV + cover letter for a pasted job ({title, company, text, url?})
   python -I bot.py --import-cv my-cv.pdf
                               rebuild profile.json from your CV (.pdf, .docx, .txt or a photo)
-  python -I gui.py            point-and-click window
+  python -I webapp.py         point-and-click window (build ui/ first, see README)
 """
 import base64
 import csv
@@ -53,7 +53,7 @@ HERE = os.environ.get("JOBHUNTER_HOME") or (
     else os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(HERE, exist_ok=True)
 CODE = os.path.dirname(os.path.abspath(__file__))  # bot.py and cv.py
-VERSION = "1.4.3"  # installer/build.ps1 checks that the release tag matches
+VERSION = "2.0.0"  # installer/build.ps1 checks that the release tag matches
 REPO = "Ahsan483/job-hunter"
 UA = {"User-Agent": f"Mozilla/5.0 (compatible; JobHunter/{VERSION}; +https://github.com/{REPO})"}
 MIN_GAP = 1.5  # seconds between two requests to the same site

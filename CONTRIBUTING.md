@@ -4,14 +4,17 @@ Thanks for helping! Small, focused pull requests are easiest to review.
 
 ## Ground rules
 - Never commit secrets or personal data: `config.json`, `profile.json`, generated CVs, `jobs.json`, `tracker.csv` and logs are git-ignored. Check `git status` before you commit.
-- Keep it dependency-free (standard library only) unless there is a strong reason.
+- The bot (`bot.py`, `cv.py`) uses only the standard library; keep it that way. The window uses pywebview and a React page in `ui/`.
 - The bot must **never send email on its own**. It only creates Gmail drafts.
 - Be polite to job sites: keep request delays and a descriptive User-Agent.
 
 ## Run it
 ```
 python -I bot.py --dry-run     # no Gemini, no Gmail: shows what each job site returned
-python -I gui.py               # the window
+python -m pip install -r requirements.txt   # once: pywebview, for the window
+cd ui && npm ci && npm run build && cd ..   # once, and after changing ui/
+python -I webapp.py            # the window
+cd ui && npm run dev           # work on the page in a browser, with sample data
 python -I -m unittest discover -s tests   # the tests; GitHub Actions runs them on every push
 ```
 

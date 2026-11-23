@@ -1,11 +1,11 @@
 """Entry point of the installed JobHunter.exe (built by installer/build.ps1).
 
 One exe does everything, so the installed app needs no Python:
-  JobHunter.exe              the window (gui.py)
+  JobHunter.exe              the window (webapp.py: the React page in ui/dist)
   JobHunter.exe --bot ...    a bot run, with bot.py's own options (used by the window and Auto-run)
   JobHunter.exe --cv ...     build a CV or cover letter PDF (used by bot.py)
 
-From source, keep using python -I gui.py / bot.py / cv.py.
+From source, keep using python -I webapp.py / bot.py / cv.py.
 """
 import io
 import os
@@ -31,8 +31,8 @@ def main():
         import cv
         cv.main()
     else:
-        import gui
-        gui.App().mainloop()
+        import webapp
+        webapp.main()
 
 
 if __name__ == "__main__":

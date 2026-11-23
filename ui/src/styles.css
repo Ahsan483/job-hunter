@@ -1,0 +1,148 @@
+/* Layout and the few custom pieces (job table, activity log). Everything else is Mantine.
+   Neutral surfaces, one blue accent, sentence-case labels: a plain, native-feeling Windows app. */
+:root {
+  --jh-bg: #f3f3f5;
+  --jh-panel: #ffffff;
+  --jh-subtle: #f8f8fa;
+  --jh-line: #e3e3e8;
+  --jh-hover: #f2f4f8;
+  --jh-selected: #e8f0fe;
+  --jh-dim: #6b6b74;
+  --jh-text: #1f1f23;
+}
+[data-mantine-color-scheme='dark'] {
+  --jh-bg: #1b1b1e;
+  --jh-panel: #232326;
+  --jh-subtle: #1f1f22;
+  --jh-line: #36363b;
+  --jh-hover: #2b2b2f;
+  --jh-selected: #24324a;
+  --jh-dim: #9d9da3;
+  --jh-text: #e4e4e7;
+}
+
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+body { background: var(--jh-bg); user-select: none; -webkit-font-smoothing: antialiased; }
+input, textarea, .job-text, .log-text, .fact { user-select: text; }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+.header { height: 56px; flex-shrink: 0; background: var(--jh-panel); border-bottom: 1px solid var(--jh-line); }
+.main { flex: 1; min-height: 0; }
+.pane { height: 100%; background: var(--jh-panel); }
+.sidebar { height: 100%; background: var(--jh-bg); }
+
+.resize-handle { background: var(--jh-line); transition: background 120ms; }
+.resize-handle.vertical { width: 1px; }
+.resize-handle.horizontal { height: 1px; }
+.resize-handle[data-resize-handle-state='hover'], .resize-handle[data-resize-handle-state='drag'] {
+  background: var(--mantine-color-brand-6);
+}
+
+.card { background: var(--jh-panel); border: 1px solid var(--jh-line); border-radius: var(--mantine-radius-md); }
+.section-title { font-size: 14px; font-weight: 600; color: var(--jh-text); }
+.modal-text { margin: 0 0 var(--mantine-spacing-lg); font-size: 14px; line-height: 1.55; }
+
+/* ---------- job list ---------- */
+.joblist { display: flex; flex-direction: column; height: 100%; background: var(--jh-panel); container-type: inline-size; }
+.joblist-bar { padding: 12px 16px 8px; }
+.joblist-meta { padding: 0 16px 8px; min-height: 24px; }
+.hint { margin: 0 16px 10px; }
+.job-head, .job-row {
+  display: grid;
+  grid-template-columns: 14px 92px minmax(70px, 1.1fr) minmax(110px, 2fr) minmax(70px, 1.2fr) minmax(50px, .8fr) 64px;
+  align-items: center; column-gap: 12px; padding: 0 16px;
+}
+@container (max-width: 560px) {
+  .job-head, .job-row { grid-template-columns: 14px 92px minmax(70px, 1fr) minmax(110px, 2fr) minmax(70px, 1fr) 0 60px; }
+  .job-head > :nth-child(6), .job-row > :nth-child(6) { visibility: hidden; }
+}
+.job-head { height: 34px; background: var(--jh-subtle); border-top: 1px solid var(--jh-line); border-bottom: 1px solid var(--jh-line); }
+.cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }
+.cell.strong { font-weight: 600; }
+.cell.dim { color: var(--jh-dim); }
+.cell.head {
+  all: unset; display: flex; align-items: center; gap: 4px; height: 100%; cursor: pointer;
+  font-size: 12px; font-weight: 600; color: var(--jh-dim);
+}
+.cell.head:hover, .cell.head.active { color: var(--jh-text); }
+.job-scroll { flex: 1; overflow: auto; position: relative; }
+.job-row { height: 40px; cursor: pointer; border-bottom: 1px solid var(--jh-line); box-shadow: inset 3px 0 0 transparent; }
+.job-row:hover { background: var(--jh-hover); }
+.job-row.selected { background: var(--jh-selected); box-shadow: inset 3px 0 0 var(--mantine-color-brand-6); }
+.match-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--jh-line); }
+.match-dot.strong { background: var(--mantine-color-green-6); }
+.match-dot.partial { background: var(--mantine-color-yellow-6); }
+.has-cv { margin-left: 6px; vertical-align: -2px; color: var(--mantine-color-green-6); }
+.empty { position: absolute; inset: 48px 24px auto; text-align: center; }
+
+/* ---------- job detail ---------- */
+.detail-wrap { display: flex; flex-direction: column; height: 100%; }
+.detail-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--jh-line); }
+.detail { flex: 1; min-height: 0; height: 100%; }
+.actions .mantine-Button-root { width: 100%; }
+.fact { min-width: 0; overflow-wrap: anywhere; }
+.job-text { font-size: 14px; line-height: 1.65; color: var(--jh-text); overflow-wrap: anywhere; }
+.job-text p { margin: 0 0 12px; white-space: pre-line; }
+.job-text p:last-child { margin-bottom: 0; }
+.step { cursor: pointer; transition: border-color 120ms, background 120ms; background: var(--jh-panel); }
+.step:hover:not(.done) { border-color: var(--mantine-color-brand-5); }
+.step.done { cursor: default; background: var(--jh-subtle); }
+
+/* ---------- activity ---------- */
+.activity { display: flex; flex-direction: column; height: 100%; background: var(--jh-subtle); }
+.activity-head { height: 40px; flex-shrink: 0; padding: 0 16px; border-bottom: 1px solid var(--jh-line); background: var(--jh-panel); }
+.activity-body { flex: 1; overflow: auto; padding: 8px 16px 16px; font-size: 13px; line-height: 1.5; }
+.activity-body .dim, .log-text.dim { color: var(--jh-dim); }
+.log-run {
+  display: flex; align-items: center; gap: 8px; margin: 14px 0 6px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--jh-line); font-weight: 600; color: var(--jh-text);
+}
+.log-run svg { color: var(--mantine-color-brand-6); }
+.log-run .dim { margin-left: auto; font-weight: 400; font-size: 12px; }
+.log-job {
+  display: grid; grid-template-columns: 96px minmax(0, max-content) minmax(0, 1fr) minmax(0, 32%);
+  align-items: center; column-gap: 12px; padding: 3px 0;
+}
+.log-job > * { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.log-job .company { font-weight: 600; max-width: 220px; }
+.log-job .role { color: var(--jh-dim); }
+.log-job .log-link, .log-job > .dim { display: block; text-align: right; font-size: 12px; }
+.log-job .reason { grid-column: 2 / -1; white-space: normal; color: var(--mantine-color-yellow-8); font-size: 12px; }
+.log-source { display: grid; grid-template-columns: 16px 190px 1fr; align-items: center; column-gap: 8px; padding: 2px 0; }
+.log-source.ok svg { color: var(--mantine-color-green-6); }
+.log-source.failed { color: var(--mantine-color-orange-7); }
+.log-source.skipped { color: var(--jh-dim); }
+.log-source .note { white-space: normal; }
+.log-text { padding: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-text.good { color: var(--mantine-color-green-7); font-weight: 600; }
+.log-text.warn { color: var(--mantine-color-orange-7); }
+.log-text.error { color: var(--mantine-color-red-7); }
+[data-mantine-color-scheme='dark'] .log-text.good { color: var(--mantine-color-green-5); }
+[data-mantine-color-scheme='dark'] .log-text.warn,
+[data-mantine-color-scheme='dark'] .log-source.failed { color: var(--mantine-color-orange-4); }
+[data-mantine-color-scheme='dark'] .log-text.error { color: var(--mantine-color-red-5); }
+[data-mantine-color-scheme='dark'] .log-job .reason { color: var(--mantine-color-yellow-5); }
+.log-text .icon { vertical-align: -2px; margin-right: 6px; }
+.log-text .files { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.file-link, .log-link { all: unset; cursor: pointer; color: var(--mantine-color-anchor); }
+.file-link {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px;
+  border: 1px solid var(--jh-line); background: var(--jh-panel); font-size: 12px;
+}
+.file-link:hover, .log-link:hover { text-decoration: underline; }
+.log-job .log-link { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary { margin: 10px 0; background: var(--jh-panel); border: 1px solid var(--jh-line); }
+.summary .notes { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+
+/* Settings: one row per setting, the number box lined up on the right. */
+.setting-row {
+  display: grid; grid-template-columns: 1fr 120px; align-items: center; column-gap: 24px;
+  padding: 14px 0; border-bottom: 1px solid var(--jh-line);
+}
+.setting-row:first-child { padding-top: 4px; }
+
+/* Thin scrollbars that match the theme */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--jh-line); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--jh-dim); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }

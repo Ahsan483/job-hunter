@@ -47,10 +47,18 @@ To run from source instead, follow the steps below.
 - Windows 10 or 11
 - [Python 3.10+](https://www.python.org/downloads/). Tick **"Add python.exe to PATH"** when installing.
 - Microsoft Edge (built into Windows; used to make the PDFs)
+- [Node.js 20+](https://nodejs.org) to build the window once
 - A free Gemini API key
 - A Gmail account, only if you want automatic drafts
 
-Nothing to `pip install`: the app uses only Python's standard library.
+The bot uses only Python's standard library. The window needs pywebview (it shows the page in Microsoft Edge WebView2, part of Windows):
+```
+python -m pip install -r requirements.txt
+cd ui
+npm ci
+npm run build
+cd ..
+```
 
 ## Install
 
@@ -92,33 +100,33 @@ Every CV, cover letter and email is built **only** from facts in `profile.json`.
 ### 6. Start it
 Double-click **Job Hunter.bat**, or run:
 ```
-python -I gui.py
+python -I webapp.py
 ```
 Press **Find jobs** for a first test. It takes 1-3 minutes and uses no Gemini and no Gmail.
 
 ## Using the window
 
-The window is a set of frosted-glass cards over a navy gradient. Drag the gaps between the cards to resize the job list, the details and the console. Hover over any button to see what it does. While no job is picked, the details card shows a **Getting started** checklist.
+The window has three columns you can resize by dragging the lines between them: **your CV, AI model and filter** on the left, the **job list** with the **Activity** log under it in the middle, and the **job you picked** on the right. Hover over any button to see what it does. While no job is picked, the right column shows a **Getting started** checklist. Every result comes as a notification in the bottom-right corner, with a soft sound (turn sounds off with the speaker icon). The sun/moon icon switches between dark and light.
 
 **Top bar**
 - **Find jobs** (F5): searches every job site and lists the matches. Uses no Gemini and no Gmail.
 - **Auto-draft best matches**: Gemini checks the fit of the top matches, writes a tailored CV and email for each, and saves Gmail drafts. Without Gmail it saves the CV, cover letter and email text as files instead.
-- **Stop**: stops the run in progress, including one started by Auto-run.
-- **Open**: your Gmail drafts, your CVs and cover letters, `tracker.csv`, `runs.log` and the data folder.
-- **Settings**: fit score, draft limits, Gemini call limit and the years-of-experience filter. **Gmail & Gemini keys…** changes your keys.
-- **Help**: getting started, this guide, report a problem, check for updates.
+- **Stop**: shows up while a run is going, including one started by Auto-run.
+- **Update to vX.Y**: shows up when a newer version is out. One click downloads it, installs it and reopens Job Hunter. Your keys, profile and CVs are kept.
 - **Auto-run**: sets up and turns on or off the 30-minute schedule (see below).
-- **Update to vX.Y**: shows up when a newer version is out. One click downloads it, installs it and reopens Job Hunter (from 1.4.1 on; older versions: download the installer once). Your keys, profile and CVs are kept.
+- **Open**: your Gmail drafts, your CVs and cover letters, `tracker.csv`, `runs.log`, your profile and the data folder.
+- **Help**: getting started, this guide, report a problem, check for updates, about.
+- **Settings** (gear icon): fit score, draft limits, Gemini call limit and the years-of-experience filter, and your Gmail & Gemini keys.
 
-**Your CV**
-- **Upload my CV**: rebuilds `profile.json` from your CV (.pdf, .docx, .txt, .md, or a .png/.jpg photo). The old one is kept as `profile.backup-*.json`.
-- **My profile**: opens `profile.json` in Notepad.
-- **Tailor CV to a job description…**: paste any job post to get a tailored CV + cover letter.
-- **AI model**: pick a Gemini model, or leave it on Auto. **Check models** shows which ones your key can use right now.
+**Left column**
+- **Upload my CV** / **Replace CV**: rebuilds `profile.json` from your CV (.pdf, .docx, .txt, .md, or a .png/.jpg photo). The old one is kept as `profile.backup-*.json`. **Check or correct my profile** opens it in Notepad.
+- **Tailor to a job**: paste any job post to get a tailored CV + cover letter.
+- **AI model**: pick a Gemini model, or leave it on Auto. Each model shows whether it works right now; the refresh icon asks Google again.
+- **What to look for**: the filter (see Filters below). **Save & search** saves it (Auto-run uses it too) and searches.
 
 **Job list**
-- **Show** picks the list: ready to draft (has an email), apply on company site, all matches, done / applied / skipped, or everything (rejected jobs show why).
-- **Search in list** (Ctrl+F) filters by any text.
+- The tabs pick the list: ready to draft (has an email), apply on company site, all matches, done / applied / skipped, or everything (rejected jobs show why).
+- **Search** (Ctrl+F) filters by any text. Click a column title to sort. The arrow keys move through the list.
 - Click a job to read the full post, salary, type and tags, then:
   - **Draft email + CV**: for jobs that published an email address.
   - **CV + cover letter**: for jobs you apply to on the company site. The files go to `cvs/`.
@@ -126,9 +134,11 @@ The window is a set of frosted-glass cards over a navy gradient. Drag the gaps b
   - **Applied**: you sent it. It moves to Done and is noted in `tracker.csv`.
   - **Skip**: the bot won't draft it.
 
+**Activity** shows each site searched and how many jobs it gave, every match, and anything that needs your attention, in plain words. Saved files are links: click one to open it.
+
 ## Filters
 
-Set these in the **Job filter** bar (then press **Save & search**) or in `config.json`:
+Set these under **What to look for** (then press **Save & search**) or in `config.json`:
 
 | Setting | Meaning | Example |
 |---|---|---|
@@ -192,7 +202,7 @@ python -I -m unittest discover -s tests   # run the tests (no network needed)
 | File | Purpose | Uploaded to GitHub? |
 |---|---|---|
 | `bot.py` | Job search, Gemini tailoring, Gmail drafts | yes |
-| `gui.py` | The window | yes |
+| `webapp.py`, `backend.py`, `ui/` | The window: a React page (`ui/`) shown by pywebview; `backend.py` is everything its buttons do | yes |
 | `cv.py` | Builds the CV / cover letter PDF | yes |
 | `jobhunter.py`, `installer/` | The installed JobHunter.exe and how it is built | yes |
 | `tests/` | Unit tests, run by GitHub Actions on every push | yes |

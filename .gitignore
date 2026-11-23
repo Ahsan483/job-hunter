@@ -10,6 +10,7 @@ tracker.csv
 jobs.json
 bot.lock
 gemini_state.json
+ui.json
 remotive_cache.json
 google_cache.json
 *.tmp

@@ -125,7 +125,9 @@ def print_pdf(html_file, out_pdf):
     """Print the page to PDF with the first browser that manages it. Returns the error when none does."""
     error = "Microsoft Edge not found. Install it from https://www.microsoft.com/edge"
     for exe in BROWSERS:
-        with tempfile.TemporaryDirectory() as profile_dir:  # its own profile: an open browser window cannot interfere
+        # Its own profile, so an open browser window cannot interfere. Edge can still be writing its Crashpad
+        # folder when it exits: a leftover temp folder must not turn a finished PDF into an error.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as profile_dir:
             try:
                 r = subprocess.run([exe, "--headless", "--disable-gpu", "--no-pdf-header-footer",
                                     f"--user-data-dir={profile_dir}", f"--print-to-pdf={out_pdf}",

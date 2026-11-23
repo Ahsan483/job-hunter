@@ -23,7 +23,7 @@ const boot: Boot = {
   ],
   models: { options: [{ value: 'gemini-flash-latest', ok: true, status: 'working' }], selected: '',
     note: '1 of 1 models usable right now.', tone: 'dim' },
-  autorun: 'off', running: false, prefs: { sounds: true, theme: 'auto' },
+  autorun: 'off', running: false, prefs: { sounds: true, theme: 'auto' }, usageStats: true,
 };
 
 const jobs: JobsResult = {

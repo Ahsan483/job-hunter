@@ -11,6 +11,7 @@ jobs.json
 bot.lock
 gemini_state.json
 ui.json
+usage.json
 remotive_cache.json
 google_cache.json
 *.tmp

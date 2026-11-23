@@ -36,7 +36,8 @@ class Base(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         for mod, names in ((backend, dict(HERE=d, CONFIG="config.json", PROFILE="profile.json", JOBS_FILE="jobs.json",
                                           TRACKER="tracker.csv", LOCK="bot.lock", UI_PREFS="ui.json")),
-                           (bot, dict(HERE=d, GEMINI_STATE="gemini_state.json", TRACKER="tracker.csv", RUNS_LOG="runs.log"))):
+                           (bot, dict(HERE=d, GEMINI_STATE="gemini_state.json", TRACKER="tracker.csv", RUNS_LOG="runs.log",
+                                      USAGE_FILE="usage.json"))):
             for k, v in names.items():
                 self.stack.enter_context(mock.patch.object(mod, k, v if k == "HERE" else os.path.join(d, v)))
         self.popen = self.stack.enter_context(mock.patch.object(backend.subprocess, "Popen"))
@@ -292,6 +293,63 @@ class Window(Base):
                 mock.patch.object(backend.tempfile, "gettempdir", return_value=self.dir):
             with self.assertRaises(ValueError):
                 backend.download_setup(lambda pct: None)
+
+
+class UsagePing(Base):
+    def urlopen(self, fail=False):
+        sent = []
+
+        class Answer:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"monthly": 1240}'
+
+        def fake(req, timeout=None):
+            if fail:
+                raise OSError("offline")
+            sent.append(req)
+            return Answer()
+        return sent, mock.patch.object(bot.urllib.request, "urlopen", fake)
+
+    def test_once_a_day_with_only_an_id_and_the_version(self):
+        sent, patch = self.urlopen()
+        with patch:
+            self.assertTrue(bot.ping_usage())
+            self.assertFalse(bot.ping_usage())  # already counted today
+        self.assertEqual(len(sent), 1)
+        body = json.loads(sent[0].data)
+        self.assertEqual(set(body), {"id", "version"})
+        self.assertRegex(body["id"], r"^[0-9a-f]{32}$")
+        self.assertTrue(sent[0].full_url.endswith("/ping"))
+
+    def test_can_be_turned_off(self):
+        self.api.set_usage_stats(False)
+        self.assertFalse(self.api.bootstrap()["usageStats"])
+        sent, patch = self.urlopen()
+        with patch:
+            self.assertFalse(bot.ping_usage())
+        self.assertEqual(sent, [])
+
+    def test_offline_tries_again_later(self):
+        _, patch = self.urlopen(fail=True)
+        with patch:
+            self.assertFalse(bot.ping_usage())
+        sent, patch = self.urlopen()
+        with patch:
+            self.assertTrue(bot.ping_usage())
+
+    def test_user_count_for_the_about_box(self):
+        _, patch = self.urlopen()
+        with patch:
+            self.assertEqual(self.api.users(), 1240)
+        _, patch = self.urlopen(fail=True)
+        with patch:
+            self.assertIsNone(self.api.users())
 
 
 class LogLines(unittest.TestCase):

@@ -1996,6 +1996,51 @@ def run_one(job_id, mode):
         drop_lock()
 
 
+# ---------- anonymous active-user count ----------
+# Once a day Job Hunter tells stats.codeprojectsofficial.com "an install is in use": a random install id and the
+# version, nothing else (no name, email, keys, jobs or CV). That gives the daily/weekly/monthly user counts.
+# Turn it off in Settings (or "usage_stats": false in config.json).
+USAGE_URL = "https://stats.codeprojectsofficial.com"
+USAGE_FILE = os.path.join(HERE, "usage.json")
+
+
+def ping_usage(cfg=None):
+    """Count this install as active today, at most once a day. Never raises; returns True when a ping was sent."""
+    try:
+        if cfg is None:
+            with open(os.path.join(HERE, "config.json"), encoding="utf-8-sig") as f:
+                cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    if not isinstance(cfg, dict) or cfg.get("usage_stats", True) is False:
+        return False
+    try:
+        with open(USAGE_FILE, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict) or not re.fullmatch(r"[0-9a-f]{32}", str(state.get("id", ""))):
+        state = {"id": os.urandom(16).hex()}
+    today = dt.date.today().isoformat()
+    if state.get("day") == today:
+        return False
+    body = json.dumps({"id": state["id"], "version": VERSION}).encode()
+    req = urllib.request.Request(f"{USAGE_URL}/ping", data=body, method="POST",
+                                 headers={**UA, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except (OSError, ValueError):
+        return False  # offline or the counter is down: try again next time
+    state["day"] = today
+    try:
+        with open(USAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+    return True
+
+
 def main():
     for flag, action in (("--import-cv", import_cv), ("--custom", run_custom)):
         if flag in sys.argv:
@@ -2021,6 +2066,7 @@ def main():
     notes = []
     try:
         cfg = load_config()
+        ping_usage(cfg)
         apply_filters(cfg)
         for line in MATCH.explain():
             log(f"Keyword {line}")

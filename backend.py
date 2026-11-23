@@ -486,6 +486,7 @@ class Api:
         """Everything the window needs to draw itself."""
         cfg = read_config()
         self._watch["jobs"] = os.path.getmtime(JOBS_FILE) if os.path.exists(JOBS_FILE) else 0
+        threading.Thread(target=bot.ping_usage, daemon=True).start()  # anonymous, once a day; see bot.ping_usage
         return {
             "version": bot.VERSION, "frozen": FROZEN, "dataFolder": HERE, "configFile": CONFIG,
             "downloadPage": DOWNLOAD_PAGE, "repo": f"https://github.com/{bot.REPO}",
@@ -495,7 +496,7 @@ class Api:
             "views": [{"value": k, "label": v[0]} for k, v in VIEWS.items()],
             "profile": self.profile(), "setup": self.setup(), "models": self.models(),
             "autorun": self.autorun_state(), "running": self._running(),
-            "prefs": self.prefs(),
+            "prefs": self.prefs(), "usageStats": cfg.get("usage_stats", True) is not False,
         }
 
     def filter_state(self, cfg=None):
@@ -569,6 +570,23 @@ class Api:
             runs = ""
         return {"version": bot.VERSION, "windows": f"{platform.system()} {platform.release()} ({platform.version()})",
                 "installed": FROZEN, "runs": re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "<email>", runs)}
+
+    def set_usage_stats(self, on):
+        """Turn the anonymous daily active-user ping on or off (config.json, shared with Auto-run)."""
+        cfg = read_config()
+        cfg["usage_stats"] = bool(on)
+        write_config(cfg)
+        return {"ok": True, "on": bool(on)}
+
+    def users(self):
+        """How many installs were used in the last 30 days, or None when the counter cannot be reached."""
+        req = urllib.request.Request(f"{bot.USAGE_URL}/stats", headers=bot.UA)
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                n = json.loads(r.read().decode()).get("monthly")
+            return n if isinstance(n, int) else None
+        except (OSError, ValueError, AttributeError):
+            return None
 
     # ----- the job list -----
 

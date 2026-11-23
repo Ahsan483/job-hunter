@@ -213,6 +213,12 @@ python -I -m unittest discover -s tests   # run the tests (no network needed)
 
 The installed app keeps the files that are not uploaded in `%APPDATA%\Job Hunter` instead of the program folder. To keep them somewhere else (a USB stick, or a test copy), set the environment variable `JOBHUNTER_HOME` to that folder.
 
+## Privacy
+
+Your keys, CV, profile, jobs and CVs never leave your computer, except to the services you connect: the Gemini key goes only to Google and the Gmail app password only to Gmail.
+
+Once a day Job Hunter sends an anonymous "in use" signal to `stats.codeprojectsofficial.com`: a random install number and the app version, nothing else. It only counts how many people use the app. Turn it off in **Settings > Count me as an active user** (or set `"usage_stats": false` in `config.json`). The counter's code is in [`stats/`](stats/).
+
 ## Job sources and credits
 
 Job listings come from [Remotive](https://remotive.com), [Remote OK](https://remoteok.com), [Arbeitnow](https://www.arbeitnow.com), [Himalayas](https://himalayas.app), [Jobicy](https://jobicy.com), [We Work Remotely](https://weworkremotely.com), [Working Nomads](https://www.workingnomads.com), [Remote First Jobs](https://remotefirstjobs.com), [Real Work From Anywhere](https://www.realworkfromanywhere.com), [4 Day Week](https://4dayweek.io), [Workew](https://workew.com), [Hacker News](https://news.ycombinator.com), the public job APIs of company career pages on Greenhouse, Ashby and Lever, and Google search through Gemini. Every job links back to its original post. Please apply through those links and support these sites.

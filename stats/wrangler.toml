@@ -1,0 +1,15 @@
+name = "job-hunter-stats"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+# Served on the website's own domain; Cloudflare creates the DNS record on the first deploy.
+routes = [{ pattern = "stats.codeprojectsofficial.com", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "job-hunter-stats"
+database_id = "defe9313-27e9-4f32-8df3-b41e4d0aff82"
+
+# Every night: drop day rows older than 90 days.
+[triggers]
+crons = ["17 3 * * *"]

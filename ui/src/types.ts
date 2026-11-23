@@ -74,6 +74,7 @@ export interface Boot {
   autorun: AutoRun;
   running: boolean;
   prefs: Prefs;
+  usageStats: boolean;
 }
 
 export interface JobRow {

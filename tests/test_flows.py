@@ -47,6 +47,7 @@ class Sandbox(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         for k, v in paths.items():
             self.stack.enter_context(mock.patch.object(bot, k, v))
+        self.stack.enter_context(mock.patch.object(bot, "ping_usage"))  # no active-user pings from tests
         self.write("profile.json", PROFILE)
         cfg = {"gemini_api_key": "AIza-test", "keywords": ["Backend Engineer"], "worldwide_only": True}
         if self.gmail:

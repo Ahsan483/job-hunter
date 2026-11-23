@@ -82,6 +82,8 @@ export const api = {
   updateNow: () => call<{ state: 'source' | 'downloading' }>('update_now'),
   setPrefs: (prefs: Partial<Prefs>) => call<Prefs>('set_prefs', prefs),
   setup: () => call<Boot['setup']>('setup'),
+  setUsageStats: (on: boolean) => call<{ ok: boolean; on: boolean }>('set_usage_stats', on),
+  users: () => call<number | null>('users'),
   diagnostics: () => call<{ version: string; windows: string; installed: boolean; runs: string }>('diagnostics'),
   profile: () => call<Boot['profile']>('profile'),
 };

@@ -1,7 +1,7 @@
 // One store for the whole window. Components read slices with useApp(s => s.x); actions.ts changes it.
 import { create } from 'zustand';
 import type {
-  AutoRun, Boot, FilterState, JobsResult, LogEntry, LoggedEntry, Models, Prefs, Profile, SetupStep, Summary,
+  AutoRun, Boot, FilterState, JobsResult, LiveJob, LogEntry, LoggedEntry, Models, Prefs, Profile, SetupStep, Summary,
 } from './types';
 
 const MAX_LOG = 2500;
@@ -29,6 +29,8 @@ export interface AppState {
   sort: string;
   desc: boolean;
   jobs: JobsResult | null;
+  /** Matches found so far by the search in progress; replaced by the full list when it ends. */
+  live: LiveJob[];
   jobsLoading: boolean;
   selected: string | null;
 
@@ -59,6 +61,7 @@ export const useApp = create<AppState>((set) => ({
   sort: 'match',
   desc: false,
   jobs: null,
+  live: [],
   jobsLoading: false,
   selected: null,
   log: [],

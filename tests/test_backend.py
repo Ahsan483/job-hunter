@@ -377,6 +377,11 @@ class LogLines(unittest.TestCase):
                                "drafts 0 | RemoteOK not searched (the site is having problems on its side right now)")
         self.assertEqual(e["notes"], ["RemoteOK not searched (the site is having problems on its side right now)"])
 
+    def test_live_matches_become_list_rows(self):
+        e = backend.parse_line('FOUND {"id": "x-1", "company": "Acme", "title": "Dev", "where": "Remote"}')
+        self.assertEqual((e["type"], e["job"]["company"]), ("found", "Acme"))
+        self.assertEqual(backend.parse_line("FOUND {broken")["type"], "text")
+
     def test_saved_files_become_links(self):
         e = backend.parse_line(r"CV saved: C:\Users\me\AppData\Roaming\Job Hunter\cvs\Jane-CV-acme.pdf")
         self.assertEqual((e["tone"], e["files"]), ("good", [r"C:\Users\me\AppData\Roaming\Job Hunter\cvs\Jane-CV-acme.pdf"]))

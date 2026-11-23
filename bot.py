@@ -1646,7 +1646,7 @@ def file_prefix():
 def collect(rows, now, today, notes):
     """Fetch every source and give each job a status: ready / apply on site / done / rejected.
     The sites are read at the same time (fetch() still spaces requests to any one site)."""
-    got = {}
+    got, shown = {}, set()
     with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
         running = {pool.submit(src): src for src in SOURCES}
         for f in as_completed(running):
@@ -1656,6 +1656,8 @@ def collect(rows, now, today, notes):
                 got[src] = f.result()
                 if src is not src_google or GOOGLE:  # Google switched off is not "0 jobs found"
                     log(f"{name}: {len(got[src])} jobs")
+                if LIVE:
+                    show_found(got[src], rows, now, today, shown)
             except SourceSkipped as e:
                 log(f"SKIPPED {name}: {e}")
             except Exception as e:  # one site failing must never stop the search; say why in plain words
@@ -1690,6 +1692,33 @@ def collect(rows, now, today, notes):
         else:
             j["status"], j["why"] = STATUS_SITE, "no published email"
     return out
+
+
+# The window sets JOBHUNTER_LIVE=1: each match is printed as soon as its site has answered, so the list fills up
+# while the slower sites are still being read. The final list (with emails and duplicates removed) replaces it.
+LIVE = os.environ.get("JOBHUNTER_LIVE") == "1"
+
+
+def show_found(jobs, rows, now, today, shown):
+    for j in jobs:
+        key = (slug(j["company"]), slug(j["title"]))
+        if key in shown or prefilter(j, now) or already_done(rows, j, None, today):
+            continue
+        shown.add(key)
+        mode = WORK_MODES.get(j.get("mode"))
+        loc = j.get("location", "")
+        print("FOUND " + json.dumps({
+            "id": j["id"], "company": j["company"], "title": j["title"], "match": j.get("match", ""),
+            "where": (f"{mode} · {loc}" if mode and mode.lower() not in loc.lower() else loc)[:80],
+            "salary": j.get("salary", ""), "date": j["date"].isoformat() if j.get("date") else "",
+            "source": source_label_of(j.get("source", "")), "link": j.get("apply") or j.get("url", ""),
+        }, ensure_ascii=False), flush=True)
+
+
+def source_label_of(name):
+    """'himalayas' -> 'Himalayas', for a job's source field."""
+    src = next((s for s in SOURCES if s.__name__ == f"src_{name}"), None)
+    return source_label(src) if src else name
 
 
 def find_emails(matches):

@@ -353,6 +353,11 @@ def parse_line(line):
     summary: the end-of-run totals, plus plain-English notes
     text:    anything else, with a tone (info, good, warn, error, dim) and any saved file paths"""
     line = line.rstrip("\r\n")
+    if line.startswith("FOUND {"):
+        try:
+            return {"type": "found", "job": json.loads(line[6:])}
+        except ValueError:
+            pass
     m = re.match(r"(CANDIDATE|APPLY ON SITE) \[(\w+)\] (.*?) \| (.*) \| (\S+)(?: \(.*\))?$", line)
     if m:
         kind, src, company, role, last = m.groups()
@@ -496,7 +501,7 @@ class Api:
             "views": [{"value": k, "label": v[0]} for k, v in VIEWS.items()],
             "profile": self.profile(), "setup": self.setup(), "models": self.models(),
             "autorun": self.autorun_state(), "running": self._running(),
-            "prefs": self.prefs(), "usageStats": cfg.get("usage_stats", True) is not False,
+            "sources": len(bot.SOURCES), "prefs": self.prefs(), "usageStats": cfg.get("usage_stats", True) is not False,
         }
 
     def filter_state(self, cfg=None):
@@ -665,7 +670,8 @@ class Api:
             try:
                 self._proc = subprocess.Popen([*BOT, *args], cwd=bot.CODE, stdout=subprocess.PIPE,
                                               stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                              errors="replace", creationflags=NO_WINDOW)
+                                              errors="replace", creationflags=NO_WINDOW,
+                                              env={**os.environ, "JOBHUNTER_LIVE": "1"})
             except OSError as e:
                 return {"ok": False, "error": f"Job Hunter could not start its search engine ({e.strerror or e})."}
         self._stopped = False
@@ -674,13 +680,24 @@ class Api:
         return {"ok": True}
 
     def _read(self, proc, what):
-        summary = None
+        summary, found, last = None, [], time.time()
         for line in proc.stdout:
             entry = parse_line(line)
+            if entry["type"] == "found":  # live list rows, not activity lines; sent in small batches
+                found.append(entry["job"])
+                if time.time() - last > 0.3:
+                    self._emit("found", found)
+                    found, last = [], time.time()
+                continue
+            if found:
+                self._emit("found", found)
+                found = []
             if entry["type"] == "summary":
                 summary = entry
             if entry["type"] != "text" or entry["text"]:
                 self._log(entry)
+        if found:
+            self._emit("found", found)
         proc.wait()
         self._flush()
         self._proc = None

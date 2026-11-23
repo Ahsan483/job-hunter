@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Anchor, Badge, Button, Divider, Group, Loader, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Text, ThemeIcon,
+  Alert, Anchor, Badge, Button, Divider, Group, Loader, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Text, ThemeIcon,
   Title, Tooltip,
 } from '@mantine/core';
 import {
@@ -126,6 +126,34 @@ export function JobDetail() {
   }, [selected, jobs]);
 
   if (!selected) return <GettingStarted />;
+  const preview = !job && !loading ? useApp.getState().live.find((j) => j.id === selected) : undefined;
+  if (preview) {
+    return (
+      <ScrollArea className="detail" type="hover">
+        <Stack p="xl" gap="md">
+          <div>
+            <Title order={3} lh={1.25}>{preview.title}</Title>
+            <Text c="dimmed" size="sm" mt={4}>{preview.company} · {preview.where}</Text>
+          </div>
+          <Group gap={6}>
+            <Badge color="teal" variant="light">Found just now</Badge>
+            {preview.match && <Badge variant="outline" color={preview.match === 'strong' ? 'green' : 'yellow'}>
+              {preview.match} match</Badge>}
+            {preview.salary && <Badge variant="default">{preview.salary}</Badge>}
+          </Group>
+          <Alert variant="light" color="brand" icon={<Loader size={16} />}>
+            Still searching the other sites. The full description, the application email and the CV buttons appear
+            here when the search ends.
+          </Alert>
+          {preview.link && (
+            <Button variant="default" leftSection={<IconExternalLink size={16} />} w="fit-content"
+              onClick={() => void api.openUrl(preview.link)}>Open the job post on {host(preview.link)}</Button>
+          )}
+          <Text size="xs" c="dimmed">Source: {preview.source}</Text>
+        </Stack>
+      </ScrollArea>
+    );
+  }
   if (!job) return loading ? <Stack p="lg"><Skeleton h={28} w="70%" /><Skeleton h={16} w="40%" />
     <Skeleton h={120} mt="md" /><Skeleton h={300} /></Stack> : <GettingStarted />;
 

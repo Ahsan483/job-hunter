@@ -176,7 +176,7 @@ const ago = (since: number) => {
 export function onRun(e: Extract<ServerEvent, { kind: 'run' }>) {
   const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (e.data.state === 'start') {
-    get().set({ run: { what: e.data.what, since: Date.now() }, lastSummary: null });
+    get().set({ run: { what: e.data.what, since: Date.now() }, lastSummary: null, live: [] });
     get().addLog([{ type: 'run', what: e.data.what, at }]);
     notifications.show({
       id: 'run', loading: true, title: e.data.what, autoClose: false, withCloseButton: false,
@@ -187,7 +187,8 @@ export function onRun(e: Extract<ServerEvent, { kind: 'run' }>) {
   const d = e.data;
   const since = get().run?.since ?? Date.now();
   get().set({ run: null, lastSummary: d.summary, profile: d.profile, setup: d.setup });
-  void loadJobs();
+  // Swap the live rows for the finished list in one step, so the list never flashes empty.
+  void loadJobs().then(() => get().set({ live: [] }));
   void guard(() => api.models()).then((m) => m && get().set({ models: m }));
   const took = ago(since);
   // What this run wrote to Activity: its matches, and any problem it reported in plain words.

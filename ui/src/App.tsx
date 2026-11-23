@@ -24,6 +24,7 @@ function useBootstrap() {
       switch (e.kind) {
         case 'log': s.addLog(e.data); break;
         case 'run': onRun(e); break;
+        case 'found': s.set({ live: s.live.concat(e.data) }); break;
         case 'jobs-changed': if (!s.run) void loadJobs(); break;
         case 'models': s.set({ models: e.data }); break;
         case 'external-run':

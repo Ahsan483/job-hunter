@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Badge, CloseButton, Group, Loader, SegmentedControl, Text, TextInput, Tooltip } from '@mantine/core';
+import { Alert, Badge, CloseButton, Group, Loader, Progress, SegmentedControl, Text, TextInput, Tooltip } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -7,14 +7,25 @@ import {
 } from '@tabler/icons-react';
 import { loadJobs, setSort, setView } from '../actions';
 import { useApp } from '../store';
-import type { JobRow, JobStatus } from '../types';
+import type { JobRow, JobStatus, LiveJob } from '../types';
 
 export const STATUS: Record<JobStatus, { label: string; color: string }> = {
   ready: { label: 'Ready', color: 'green' },
   'apply on site': { label: 'On site', color: 'brand' },
   done: { label: 'Done', color: 'gray' },
   rejected: { label: 'Rejected', color: 'red' },
+  found: { label: 'Found', color: 'teal' },
 };
+
+function sinceDays(iso: string) {
+  const d = Math.floor((Date.now() - Date.parse(iso)) / 86400000);
+  return Number.isNaN(d) ? '' : d <= 0 ? 'today' : `${d}d ago`;
+}
+
+const liveRow = (j: LiveJob): JobRow => ({
+  id: j.id, status: 'found', why: '', match: j.match, date: j.date, ago: sinceDays(j.date), company: j.company,
+  title: j.title, where: j.where, salary: j.salary, email: false, hasCv: false,
+});
 
 const VIEWS = [
   { value: 'ready', label: 'Ready to draft' },
@@ -71,7 +82,17 @@ export function JobList() {
   const [query, setQuery] = useState(useApp.getState().query);
   const [debounced] = useDebouncedValue(query, 200);
   const parent = useRef<HTMLDivElement>(null);
-  const rows = jobs?.rows ?? [];
+  const live = useApp((s) => s.live);
+  const run = useApp((s) => s.run);
+  const total = useApp((s) => s.boot?.sources ?? 0);
+  // Sites that have answered in this run: the "source" lines Activity got since the run started.
+  const sitesDone = useApp((s) => {
+    let n = 0;
+    for (let i = s.log.length - 1; i >= 0 && s.log[i].type !== 'run'; i--) if (s.log[i].type === 'source') n++;
+    return n;
+  });
+  const searching = run !== null && (live.length > 0 || sitesDone > 0);
+  const rows = searching ? live.map(liveRow) : (jobs?.rows ?? []);
 
   useEffect(() => {
     if (debounced === useApp.getState().query) return;
@@ -117,14 +138,28 @@ export function JobList() {
 
       <Group className="joblist-meta" gap="xs" justify="space-between" wrap="nowrap">
         <Text size="xs" c="dimmed">
-          {jobs ? <>
+          {searching ? <>Live results · <b>{live.length}</b> found so far</> : jobs ? <>
             <b>{rows.length.toLocaleString()}</b> shown · {jobs.ready} ready · {jobs.site} on company sites ·{' '}
             {jobs.total.toLocaleString()} jobs checked{jobs.updated ? ` · updated ${jobs.updated}` : ''}
           </> : 'Loading...'}
         </Text>
         {loading && <Loader size={12} />}
       </Group>
-      {jobs?.hint && (
+      {searching && (
+        <div className="live-bar">
+          <Group justify="space-between" mb={6} wrap="nowrap">
+            <Group gap={8} wrap="nowrap">
+              <Loader size={14} />
+              <Text size="sm" fw={600}>Searching job sites: {Math.min(sitesDone, total)} of {total} done</Text>
+            </Group>
+            <Text size="sm" c="dimmed">{live.length} match{live.length === 1 ? '' : 'es'} so far</Text>
+          </Group>
+          <Progress value={total ? (Math.min(sitesDone, total) / total) * 100 : 0} size="sm" animated />
+          <Text size="xs" c="dimmed" mt={6}>Matches appear here as each site answers. Click one to read it while the
+            rest are searched; the full list with emails replaces this when the search ends.</Text>
+        </div>
+      )}
+      {!searching && jobs?.hint && (
         <Alert className="hint" variant="light" color="yellow" icon={<IconBulb size={16} />} p="xs">
           <Text size="xs">Few matches. {jobs.hint}</Text>
         </Alert>
@@ -142,7 +177,7 @@ export function JobList() {
       </div>
 
       <div className="job-scroll" ref={parent} role="grid">
-        {rows.length === 0 && jobs && (
+        {rows.length === 0 && jobs && !searching && (
           <div className="empty">
             <Text fw={600}>{jobs.total ? 'No jobs in this view' : 'No jobs yet'}</Text>
             <Text size="sm" c="dimmed">{query ? 'Nothing matches your search.' : jobs.total

@@ -3,7 +3,7 @@
 export type Tone = 'info' | 'good' | 'warn' | 'error' | 'dim';
 export type Need = 'gemini' | 'profile' | 'gmail';
 export type AutoRun = 'on' | 'off' | null;
-export type JobStatus = 'ready' | 'apply on site' | 'done' | 'rejected';
+export type JobStatus = 'ready' | 'apply on site' | 'done' | 'rejected' | 'found';
 
 export interface Option {
   value: string;
@@ -75,6 +75,20 @@ export interface Boot {
   running: boolean;
   prefs: Prefs;
   usageStats: boolean;
+  sources: number;
+}
+
+/** A match reported while the search is still running (bot.show_found). */
+export interface LiveJob {
+  id: string;
+  company: string;
+  title: string;
+  match: '' | 'strong' | 'partial';
+  where: string;
+  salary: string;
+  date: string;
+  source: string;
+  link: string;
 }
 
 export interface JobRow {
@@ -180,6 +194,7 @@ export type ServerEvent =
   | { kind: 'run'; data: { state: 'start'; what: string } }
   | { kind: 'run'; data: { state: 'end'; what: string; stopped: boolean; code: number; summary: Summary | null;
       profile: Profile | null; setup: SetupStep[] } }
+  | { kind: 'found'; data: LiveJob[] }
   | { kind: 'jobs-changed'; data: null }
   | { kind: 'models'; data: Models }
   | { kind: 'external-run'; data: boolean }

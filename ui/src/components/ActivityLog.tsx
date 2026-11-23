@@ -84,7 +84,7 @@ function Entry({ e }: { e: LoggedEntry }) {
           <Icon size={13} />
           <span className="name">{e.name}</span>
           {e.state !== 'ok' ? <span className="note">{e.note}</span>
-            : e.count ? <span>{e.count} jobs</span> : <span className="dim">none right now</span>}
+            : e.count ? <span>{e.count.toLocaleString()} job{e.count === 1 ? "" : "s"}</span> : <span className="dim">none right now</span>}
         </div>
       );
     }

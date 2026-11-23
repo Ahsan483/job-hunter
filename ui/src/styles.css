@@ -140,6 +140,7 @@ input, textarea, .job-text, .log-text, .fact { user-select: text; }
   padding: 14px 0; border-bottom: 1px solid var(--jh-line);
 }
 .setting-row:first-child { padding-top: 4px; }
+.optional-box { background: var(--jh-subtle); }
 
 /* Thin scrollbars that match the theme */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

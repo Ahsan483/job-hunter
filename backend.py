@@ -125,7 +125,7 @@ KEY_FIELDS = [
       "Press Create API key (accept the terms if asked) and copy the key. It starts with AIza.",
       "Paste it here. The free tier is enough and needs no card."],
      [("Open Google AI Studio", "https://aistudio.google.com/apikey")]),
-    ("gmail_address", "Gmail address (optional)", False, None, []),
+    ("gmail_address", "Gmail address", False, None, []),
     ("gmail_app_password", "Gmail app password", True,
      ["Google only gives app passwords to accounts with 2-Step Verification. Turn it on first if it is off.",
       "Open App passwords, type a name such as Job Hunter and press Create.",

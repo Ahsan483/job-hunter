@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
-  Alert, Anchor, Button, Group, List, Loader, PasswordInput, Stack, Text, TextInput, ThemeIcon,
+  Alert, Anchor, Badge, Button, Group, List, Loader, Paper, PasswordInput, Stack, Text, TextInput, ThemeIcon,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
-import { IconCheck, IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
+import { IconBrandGmail, IconCheck, IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { api } from '../api';
 import { guard, toastError, toastOk } from '../actions';
 import { useApp } from '../store';
@@ -56,13 +56,12 @@ export function KeysDialog({ intro }: { intro?: string }) {
     modals.closeAll();
   };
 
-  return (
-    <Stack gap="lg">
-      {intro && <Alert variant="light" color="brand" icon={<IconInfoCircle />}>{intro}</Alert>}
-      {fields.map((f) => (
+  const gmailFilled = Boolean(values.gmail_address?.trim() || values.gmail_app_password?.trim());
+  const field = (f: KeyField) => (
         <Stack key={f.key} gap={6}>
           {f.secret ? (
             <PasswordInput label={f.label} value={values[f.key] ?? ''} error={errors[f.key]}
+              withAsterisk={f.key === 'gemini_api_key'}
               onChange={(e) => change(f.key, e.currentTarget.value)} autoComplete="off" spellCheck={false}
               data-autofocus={f.key === 'gemini_api_key' || undefined} />
           ) : (
@@ -84,14 +83,32 @@ export function KeysDialog({ intro }: { intro?: string }) {
             </Group>
           )}
         </Stack>
-      ))}
+  );
+
+  return (
+    <Stack gap="lg">
+      {intro && <Alert variant="light" color="brand" icon={<IconInfoCircle />}>{intro}</Alert>}
+      {fields.filter((f) => !f.key.startsWith('gmail_')).map(field)}
+      <Paper withBorder p="md" radius="md" className="optional-box">
+        <Group gap="xs" mb={4}>
+          <IconBrandGmail size={18} />
+          <Text fw={600} size="sm">Gmail drafts</Text>
+          <Badge variant="light" color="gray" size="sm">Optional</Badge>
+        </Group>
+        <Text size="xs" c="dimmed" mb="md">
+          Only for saving each application as a <b>draft in your own Gmail</b>, ready for you to check and send. Job
+          Hunter never sends anything itself. Skip this and everything else still works: you get the tailored CV,
+          cover letter and email text as files to send yourself.
+        </Text>
+        <Stack gap="lg">{fields.filter((f) => f.key.startsWith('gmail_')).map(field)}</Stack>
+      </Paper>
       <Text size="xs" c="dimmed">Saved only on this PC, in config.json. Job Hunter sends the Gemini key only to Google
         and the Gmail password only to Gmail.</Text>
       <Group justify="space-between">
         <Group gap={6}>
           {busy && <><Loader size="xs" /><Text size="sm" c="dimmed">Testing with Google...</Text></>}
           {passed && !busy && <><ThemeIcon size="sm" radius="xl"><IconCheck size={14} /></ThemeIcon>
-            <Text size="sm">Both work</Text></>}
+            <Text size="sm">{gmailFilled ? 'Gemini and Gmail work' : 'Gemini works'}</Text></>}
           {!busy && Object.values(errors).some(Boolean) &&
             <><ThemeIcon size="sm" radius="xl" color="red"><IconX size={14} /></ThemeIcon>
               <Text size="sm" c="red">Not accepted</Text></>}
